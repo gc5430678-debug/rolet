@@ -140,7 +140,6 @@ function ProfileScreen({
     return 0;
   });
 
-  const computedAge = ageFromYearMonth(years[yearIndex] ?? currentYear, (monthIndex ?? 0) + 1);
   const dateOfBirthStr =
     `${years[yearIndex]}-${String((monthIndex ?? 0) + 1).padStart(2, "0")}-01`;
 
@@ -442,19 +441,7 @@ function TabIcon({
     ]).start();
   }, [scaleAnim, rotateAnim]);
 
-  useEffect(() => {
-    if (active) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.5, duration: 800, useNativeDriver: false }),
-        ])
-      ).start();
-    } else {
-      glowAnim.setValue(0);
-    }
-  }, [active, glowAnim]);
-
+  
   const rotation = rotateAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "-8deg"],
@@ -1149,7 +1136,7 @@ const styles = StyleSheet.create({
     color: TEXT_MUTED,
   },
   genderLabelActive: {
-    color: ACCENT_SOFT,
+  
     fontWeight: "600",
   },
   lockedHint: {
