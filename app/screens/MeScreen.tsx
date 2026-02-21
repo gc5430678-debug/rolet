@@ -144,34 +144,56 @@ export default function MeScreen({ user, onEditProfile }: Props) {
               <View>
                 <Ionicons name="cash-outline" size={24} color="#fff7ed" />
                 <Text style={styles.financeLabel}>شحن</Text>
-                
               </View>
-                 <Ionicons
-              name="chevron-forward-outline"
-              size={20}
-              color="#fff7ed"
-              style={{ marginTop: 8 }}
-            />
-             </View>
-          
-         
-          </View>
-
-          <View style={styles.financeCardPurple}>
-            <View style={{flexDirection:"row",gap:50}}>
-            <View>
-            <Ionicons name="wallet-outline" size={24} color={GOLD} />
-            <Text style={styles.financeLabel}>الإيرادات</Text>
-            </View>
-            
-            <Ionicons
-              name="chevron-forward-outline"
-              size={20}
-              color={TEXT_LIGHT}
-              style={{ marginTop: 8 }}
+              <Ionicons
+                name="chevron-forward-outline"
+                size={20}
+                color="#fff7ed"
+                style={{ marginTop: 8 }}
               />
             </View>
           </View>
+
+          <View style={styles.financeCardPurple}>
+            <View style={{ flexDirection: "row", gap: 50 }}>
+              <View>
+                <Ionicons name="wallet-outline" size={24} color={GOLD} />
+                <Text style={styles.financeLabel}>الإيرادات</Text>
+              </View>
+              <Ionicons
+                name="chevron-forward-outline"
+                size={20}
+                color={TEXT_LIGHT}
+                style={{ marginTop: 8 }}
+              />
+            </View>
+          </View>
+        </View>
+
+        {/* الأقسام الجديدة تحت شحن وإيرادات */}
+        <View style={styles.newSections}>
+          {[
+            { title: "مركز المهام", icon: "list" },
+            { title: "ديكورات", icon: "color-palette" },
+            { title: "زواري", icon: "people" },
+            { title: "كيفية استخدام men", icon: "help-circle" },
+            { title: "إعدادات", icon: "settings" },
+             // القسم الجديد
+
+          ].map((item, index) => (
+            <TouchableOpacity key={index} style={styles.newSectionCard}>
+              <View style={styles.newSectionRow}>
+                <Ionicons name={item.icon as any} size={22} color={ACCENT_SOFT} />
+                <Text style={styles.newSectionText}>{item.title}</Text>
+                <Ionicons
+                  name="chevron-forward-outline"
+                  size={20}
+                  color={ACCENT_SOFT}
+                  style={{ marginLeft: "auto" }}
+                />
+              </View>
+            </TouchableOpacity>
+          ))}
         </View>
       </View>
     </ScrollView>
@@ -277,7 +299,6 @@ const styles = StyleSheet.create({
   },
 
   financeCardPurple: {
-    
     flex: 1,
     backgroundColor: "#A855F7",
     paddingVertical: 22,
@@ -292,10 +313,27 @@ const styles = StyleSheet.create({
     color: TEXT_LIGHT,
   },
 
-  financeLabelLight: {
-    marginTop: 8,
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#fff7ed",
+  newSections: {
+    marginTop: 24,
+    gap: 14,
+  },
+
+  newSectionCard: {
+    backgroundColor: ACCENT_MUTED,
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+
+  newSectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+
+  newSectionText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: TEXT_LIGHT,
   },
 });
