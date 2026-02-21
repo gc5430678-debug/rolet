@@ -98,13 +98,11 @@ export default function MeScreen({ user, onEditProfile }: Props) {
             </TouchableOpacity>
 
             <View style={styles.badgesRow}>
-              {/* الدولة */}
               <View style={styles.badge}>
                 <Text style={styles.badgeEmoji}>{flag}</Text>
                 <Text style={styles.badgeText}>{countryName || "—"}</Text>
               </View>
 
-              {/* الجنس + العمر معًا */}
               {user.gender && age != null ? (
                 <View style={styles.badge}>
                   <Text style={styles.badgeIcon}>
@@ -119,20 +117,41 @@ export default function MeScreen({ user, onEditProfile }: Props) {
                 </View>
               ) : null}
             </View>
+
+            {/* الاحصائيات الجديدة */}
+         
           </View>
+          
         </View>
 
-        {/* سهم طرف الصفحة */}
         <TouchableOpacity style={styles.arrowBtn} onPress={onEditProfile}>
           <Ionicons name="chevron-forward" size={22} color={ACCENT_SOFT} />
         </TouchableOpacity>
       </View>
+         <View style={styles.order}>
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <Text style={styles.statNumber}>0</Text>
+                <Text style={styles.statLabel}>صديق</Text>
+              </View>
+
+              <View style={styles.statItem}>
+                <Text style={styles.statNumber}>0</Text>
+                <Text style={styles.statLabel}>أتابع</Text>
+              </View>
+
+              <View style={styles.statItem}>
+                <Text style={styles.statNumber}>0</Text>
+                <Text style={styles.statLabel}>معجب</Text>
+                </View>
+              </View>
+            </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: PURPLE_DARK, marginTop:40 },
+  container: { flex: 1, backgroundColor: PURPLE_DARK, marginTop: 40 },
   content: { padding: 20 },
   row: {
     flexDirection: "row",
@@ -183,4 +202,28 @@ const styles = StyleSheet.create({
   badgeEmoji: { fontSize: 14 },
   badgeIcon: { fontSize: 14, color: ACCENT_SOFT },
   badgeText: { fontSize: 11, color: TEXT_LIGHT },
+
+  /* الاحصائيات */
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+  },
+  statItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  statNumber: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: TEXT_LIGHT,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    marginTop: 4,
+  },
+  order: {
+marginTop:30
+  }
 });
