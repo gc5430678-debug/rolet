@@ -11,8 +11,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as Localization from "expo-localization";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
+import { fetchFollowers, fetchFriends, fetchFollowing } from "../../utils/socialApi";
 import { useAppAlert } from "../components/AppAlertProvider";
 
 const PURPLE_DARK = "#1a1625";
@@ -84,13 +84,15 @@ export default function MeScreen({ user, onEditProfile, onOpenInfoPage, onOpenTo
   const age = user.age ?? ageFromDateOfBirth(user.dateOfBirth);
   const userId = user.id || user.email?.split("@")[0] || "—";
   const profileId = user.id || user.email || "";
-  const [likeCount, setLikeCount] = useState(0);
+  const [admirersCount, setAdmirersCount] = useState(0);
+  const [friendsCount, setFriendsCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   useEffect(() => {
     if (!profileId) return;
-    AsyncStorage.getItem(`profile_likes_count_${profileId}`).then((v) => {
-      if (v != null) setLikeCount(parseInt(v, 10) || 0);
-    });
+    fetchFollowers().then((list) => setAdmirersCount(list.length));
+    fetchFriends().then((list) => setFriendsCount(list.length));
+    fetchFollowing().then((list) => setFollowingCount(list.length));
   }, [profileId]);
 
   const copyUserId = useCallback(async () => {
@@ -168,17 +170,17 @@ export default function MeScreen({ user, onEditProfile, onOpenInfoPage, onOpenTo
         <View style={[styles.statsCard, CARD_SHADOW]}>
           <View style={styles.statsRow}>
             <TouchableOpacity style={styles.statItem} onPress={onOpenFriends} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>0</Text>
+              <Text style={styles.statNumber}>{friendsCount}</Text>
               <Text style={styles.statLabel}>صديق</Text>
             </TouchableOpacity>
             <View style={styles.statDivider} />
             <TouchableOpacity style={styles.statItem} onPress={onOpenFollowing} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>0</Text>
+              <Text style={styles.statNumber}>{followingCount}</Text>
               <Text style={styles.statLabel}>أتابع</Text>
             </TouchableOpacity>
             <View style={styles.statDivider} />
             <TouchableOpacity style={styles.statItem} onPress={onOpenAdmirers} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>{likeCount}</Text>
+              <Text style={styles.statNumber}>{admirersCount}</Text>
               <Text style={styles.statLabel}>معجب</Text>
             </TouchableOpacity>
           </View>

@@ -24,10 +24,12 @@ import * as Localization from "expo-localization";
 import { checkAuthStatus, API_BASE_URL } from "../utils/authHelper";
 import { getFlagEmoji, getCountryName } from "../utils/countries";
 import type { UserSearchResult } from "../utils/usersApi";
+import type { SocialUser } from "../utils/socialApi";
 import HomeScreen from "./screens/HomeScreen";
 import MeScreen from "./screens/MeScreen";
 import InfoScreen from "./screens/InfoScreen";
 import MessagesScreen from "./screens/MessagesScreen";
+import ChatScreen from "./screens/ChatScreen";
 import ClubScreen from "./screens/ClubScreen";
 import MomentScreen from "./screens/MomentScreen";
 import { AppAlertProvider } from "./components/AppAlertProvider";
@@ -593,9 +595,11 @@ export default function Page() {
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showInfoPage, setShowInfoPage] = useState(false);
   const [showTopupPage, setShowTopupPage] = useState(false);
-  const [socialListType, setSocialListType] = useState<"admirers" | "following" | "friends" | null>(null);
+  const [socialListType, setSocialListType] = useState<"admirers" | "following" | "friends" | "blocked" | null>(null);
+  const [selectedAdmirer, setSelectedAdmirer] = useState<{ user: SocialUser; isFriend: boolean } | null>(null);
   const [showSearchPage, setShowSearchPage] = useState(false);
   const [selectedSearchUser, setSelectedSearchUser] = useState<UserSearchResult | null>(null);
+  const [selectedChatUser, setSelectedChatUser] = useState<UserSearchResult | null>(null);
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const pinRefs = useRef<(TextInput | null)[]>([]);
@@ -887,6 +891,17 @@ export default function Page() {
 
   // ——— الشاشة الرئيسية: تبويبات (أنا، رسائل، نادي، لحظة) أو صفحة الملف إذا غير مكتمل ———
   if (authState === "main" && user) {
+    if (selectedChatUser) {
+      return (
+        <AppAlertProvider>
+          <ChatScreen
+            me={{ id: user.id, name: user.name, profileImage: user.profileImage }}
+            other={selectedChatUser}
+            onBack={() => setSelectedChatUser(null)}
+          />
+        </AppAlertProvider>
+      );
+    }
     const profileComplete = isProfileComplete(user);
     if (showProfileEdit || !profileComplete) {
       return (
@@ -914,12 +929,38 @@ export default function Page() {
       );
     }
     if (socialListType) {
+      if (selectedAdmirer) {
+        const { user: admirerUser, isFriend } = selectedAdmirer;
+        const profileUser: UserSearchResult = {
+          id: admirerUser.id,
+          name: admirerUser.name,
+          profileImage: admirerUser.profileImage,
+          age: admirerUser.age,
+          country: admirerUser.country,
+          gender: admirerUser.gender,
+        };
+        return (
+          <AppAlertProvider>
+            <UserProfileScreen
+              user={profileUser}
+              currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
+              onBack={() => setSelectedAdmirer(null)}
+              fromAdmirers
+              isFriend={isFriend}
+              onAcceptFriend={() => setSelectedAdmirer(null)}
+              onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
+            />
+          </AppAlertProvider>
+        );
+      }
       return (
         <AppAlertProvider>
           <SocialListScreen
             type={socialListType}
-            onBack={() => setSocialListType(null)}
+            currentUserId={user?.id}
+            onBack={() => { setSocialListType(null); setSelectedAdmirer(null); }}
             onSwitchType={setSocialListType}
+            onAdmirerPress={(u, isFriend) => setSelectedAdmirer({ user: u, isFriend })}
           />
         </AppAlertProvider>
       );
@@ -930,7 +971,9 @@ export default function Page() {
           <AppAlertProvider>
             <UserProfileScreen
               user={selectedSearchUser}
+              currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
               onBack={() => setSelectedSearchUser(null)}
+              onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
             />
           </AppAlertProvider>
         );

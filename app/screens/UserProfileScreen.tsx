@@ -21,6 +21,8 @@ import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { API_BASE_URL } from "../../utils/authHelper";
 import { fetchMoments, toggleMomentLike, type Moment } from "../../utils/momentsApi";
 import type { UserSearchResult } from "../../utils/usersApi";
+import { followUser, unfollowUser, isFollowing, acceptFriendRequest, blockUser, unblockUser, fetchBlocked } from "../../utils/socialApi";
+import { useAppAlert } from "../components/AppAlertProvider";
 
 function getFullMediaUrl(url: string): string {
   if (!url) return "";
@@ -66,19 +68,40 @@ function formatRelativeTime(input: string | Date | null | undefined): string {
   return new Date(input).toLocaleDateString("ar-SA", { month: "short", day: "numeric" });
 }
 
-type Props = {
-  user: UserSearchResult;
-  onBack: () => void;
+type CurrentUser = {
+  id?: string;
+  name?: string;
+  profileImage?: string;
+  age?: number | null;
+  country?: string;
+  gender?: string;
 };
 
-export default function UserProfileScreen({ user, onBack }: Props) {
+type Props = {
+  user: UserSearchResult;
+  currentUser: CurrentUser | null;
+  onBack: () => void;
+  fromAdmirers?: boolean;
+  isFriend?: boolean;
+  onAcceptFriend?: () => void;
+  onOpenChat?: (user: UserSearchResult) => void;
+};
+
+export default function UserProfileScreen({ user, currentUser, onBack, fromAdmirers, isFriend, onAcceptFriend, onOpenChat }: Props) {
+  const { show } = useAppAlert();
   const [copied, setCopied] = useState(false);
+  const [isFollowed, setIsFollowed] = useState(false);
+  const [acceptedAsFriend, setAcceptedAsFriend] = useState(isFriend ?? false);
+  const [accepting, setAccepting] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockedMe, setBlockedMe] = useState(false);
   const [activeTab, setActiveTab] = useState<"info" | "moment">("info");
   const [moments, setMoments] = useState<Moment[]>([]);
   const [momentsLoading, setMomentsLoading] = useState(false);
   const [momentsError, setMomentsError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [mediaModal, setMediaModal] = useState<Moment | null>(null);
+  const [moreMenuVisible, setMoreMenuVisible] = useState(false);
 
   const copyId = async () => {
     await Clipboard.setStringAsync(user.id);
@@ -105,6 +128,77 @@ export default function UserProfileScreen({ user, onBack }: Props) {
   useEffect(() => {
     if (activeTab === "moment") loadMoments();
   }, [activeTab, loadMoments]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    isFollowing(user.id).then(setIsFollowed);
+  }, [user.id, currentUser?.id]);
+
+  useEffect(() => {
+    fetchBlocked().then((list) => {
+      const blockedByMe = list.find(
+        (b) => b.id === user.id && (b.relation === "blocked" || b.relation === "mutual")
+      );
+      const blockedMeUser = list.find(
+        (b) => b.id === user.id && (b.relation === "blocked_me" || b.relation === "mutual")
+      );
+      setIsBlocked(!!blockedByMe);
+      setBlockedMe(!!blockedMeUser);
+    });
+  }, [user.id]);
+
+  useEffect(() => {
+    setAcceptedAsFriend(isFriend ?? false);
+  }, [isFriend]);
+
+  const handleFollowToggle = useCallback(async () => {
+    if (!currentUser?.id) return;
+    if (currentUser.id === user.id) return;
+    if (blockedMe) {
+      show({
+        title: "لا يمكنك الإضافة",
+        message: `تم حظرك من قبل المستخدم ${user.name} (${user.id})، لا يمكنك المتابعة أو قبول الطلب حتى يتم إلغاء الحظر.`,
+        type: "error",
+      });
+      return;
+    }
+    if (isFollowed) {
+      const ok = await unfollowUser(user.id);
+      if (ok) {
+        setIsFollowed(false);
+        // عند إلغاء المتابعة نرجع زر \"قبول طلب\" لوضعه الطبيعي
+        setAcceptedAsFriend(false);
+      } else {
+        show({
+          title: "انتهت مدة الاستجابة",
+          message: "تعذر تنفيذ الطلب. تحقق من اتصال الإنترنت وحاول مرة أخرى.",
+          type: "error",
+        });
+      }
+    } else {
+      const ok = await followUser(user.id);
+      if (ok) {
+        setIsFollowed(true);
+      } else {
+        show({
+          title: "انتهت مدة الاستجابة",
+          message: "تعذر تنفيذ الطلب. تحقق من اتصال الإنترنت وحاول مرة أخرى.",
+          type: "error",
+        });
+      }
+    }
+  }, [currentUser, user.id, isFollowed, blockedMe, show, user.name]);
+
+  const handleAcceptFriend = useCallback(async () => {
+    if (accepting || acceptedAsFriend) return;
+    setAccepting(true);
+    const ok = await acceptFriendRequest(user.id);
+    setAccepting(false);
+    if (ok) {
+      setAcceptedAsFriend(true);
+      onAcceptFriend?.();
+    }
+  }, [user.id, accepting, acceptedAsFriend, onAcceptFriend]);
 
   const handleLike = useCallback(async (moment: Moment) => {
     const res = await toggleMomentLike(moment.id);
@@ -139,8 +233,17 @@ export default function UserProfileScreen({ user, onBack }: Props) {
           />
         }
       >
-        {/* صورة شخصية مربعة مع إطار — معلومات داخل الصورة أسفل يسار */}
+        {/* صورة شخصية مربعة مع إطار — معلومات داخل الصورة أسفل يسار + زر خيارات أعلى اليسار */}
         <View style={styles.profileImageWrap}>
+          <View style={styles.moreBtnWrap}>
+            <TouchableOpacity
+              style={styles.moreBtn}
+              activeOpacity={0.8}
+              onPress={() => setMoreMenuVisible(true)}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={TEXT_LIGHT} />
+            </TouchableOpacity>
+          </View>
           {user.profileImage ? (
             <Image source={{ uri: user.profileImage }} style={styles.profileImage} resizeMode="cover" />
           ) : (
@@ -359,6 +462,54 @@ export default function UserProfileScreen({ user, onBack }: Props) {
         )}
       </ScrollView>
 
+      {/* سايد بار صغير لخيارات المستخدم (حظر / إلغاء متابعة) */}
+      {moreMenuVisible && (
+        <Pressable
+          style={styles.moreMenuOverlay}
+          onPress={() => setMoreMenuVisible(false)}
+        >
+          <View style={styles.moreMenuCard}>
+            <TouchableOpacity
+              style={styles.moreMenuItem}
+              activeOpacity={0.7}
+              onPress={async () => {
+                if (!currentUser?.id || currentUser.id === user.id) {
+                  setMoreMenuVisible(false);
+                  return;
+                }
+                if (isBlocked) {
+                  const ok = await unblockUser(user.id);
+                  if (ok) setIsBlocked(false);
+                } else {
+                  const ok = await blockUser(user.id);
+                  if (ok) setIsBlocked(true);
+                }
+                setMoreMenuVisible(false);
+              }}
+            >
+              <Ionicons name="ban-outline" size={18} color="#f97373" />
+              <Text style={[styles.moreMenuText, { color: "#f97373" }]}>
+                {isBlocked ? "إلغاء الحظر" : "حظر المستخدم"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.moreMenuItem}
+              activeOpacity={0.7}
+              onPress={async () => {
+                await handleFollowToggle();
+                setMoreMenuVisible(false);
+              }}
+              disabled={!currentUser?.id || currentUser.id === user.id}
+            >
+              <Ionicons name="person-remove-outline" size={18} color="#facc15" />
+              <Text style={[styles.moreMenuText, { color: "#facc15" }]}>
+                {isFollowed ? "إلغاء المتابعة" : "متابعة"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      )}
+
       {/* مودال عرض الصور والفيديو على طول الصفحة */}
       <Modal visible={!!mediaModal} animationType="fade" transparent onRequestClose={() => setMediaModal(null)}>
         <Pressable style={styles.mediaModalOverlay} onPress={() => setMediaModal(null)}>
@@ -394,19 +545,74 @@ export default function UserProfileScreen({ user, onBack }: Props) {
       </Modal>
       {/* صف الأيقونات — ثابت في أسفل الصفحة */}
       <View style={styles.actionsRow}>
+        {fromAdmirers && (
+          <TouchableOpacity
+            style={styles.actionBtn}
+            activeOpacity={0.8}
+            onPress={handleAcceptFriend}
+            disabled={accepting || acceptedAsFriend}
+          >
+            <View
+              style={[
+                styles.actionIconWrap,
+                {
+                  backgroundColor: acceptedAsFriend ? "rgba(52,211,153,0.4)" : "rgba(96,165,250,0.25)",
+                },
+              ]}
+            >
+              <Ionicons
+                name={acceptedAsFriend ? "checkmark-done" : "person-add"}
+                size={24}
+                color={acceptedAsFriend ? ADD_COLOR : MESSAGE_COLOR}
+              />
+            </View>
+            <Text
+              style={[
+                styles.actionLabel,
+                acceptedAsFriend && { color: ADD_COLOR, fontWeight: "700" },
+              ]}
+            >
+              {acceptedAsFriend ? "صديق" : accepting ? "جاري..." : "قبول طلب"}
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
           <View style={[styles.actionIconWrap, { backgroundColor: "rgba(244,114,182,0.2)" }]}>
             <Ionicons name="heart" size={24} color={HEART_COLOR} />
           </View>
           <Text style={styles.actionLabel}>إعجاب</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
-          <View style={[styles.actionIconWrap, { backgroundColor: "rgba(52,211,153,0.2)" }]}>
-            <Ionicons name="person-add" size={24} color={ADD_COLOR} />
+        <TouchableOpacity
+          style={styles.actionBtn}
+          activeOpacity={0.8}
+          onPress={handleFollowToggle}
+          disabled={!currentUser?.id || currentUser.id === user.id}
+        >
+          <View
+            style={[
+              styles.actionIconWrap,
+              { backgroundColor: isFollowed ? "rgba(52,211,153,0.35)" : "rgba(52,211,153,0.2)" },
+            ]}
+          >
+            <Ionicons
+              name={isFollowed ? "checkmark-circle" : "person-add-outline"}
+              size={24}
+              color={ADD_COLOR}
+            />
           </View>
-          <Text style={styles.actionLabel}>إضافة</Text>
+          <Text style={[styles.actionLabel, isFollowed && { color: ADD_COLOR, fontWeight: "700" }]}>
+            {isFollowed ? "تم إضافة" : "متابعة"}
+          </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.actionBtn}
+          activeOpacity={0.8}
+          onPress={() => {
+            if (!currentUser) return;
+            onOpenChat?.(user);
+          }}
+          disabled={!currentUser}
+        >
           <View style={[styles.actionIconWrap, { backgroundColor: "rgba(96,165,250,0.2)" }]}>
             <Ionicons name="chatbubble-ellipses" size={24} color={MESSAGE_COLOR} />
           </View>
@@ -461,6 +667,22 @@ const styles = StyleSheet.create({
     backgroundColor: ACCENT_MUTED,
     alignItems: "center",
     justifyContent: "center",
+  },
+  moreBtnWrap: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    zIndex: 5,
+  },
+  moreBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(15,23,42,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.6)",
   },
   imageOverlay: {
     position: "absolute",
@@ -777,6 +999,35 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 999,
     backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  moreMenuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+  },
+  moreMenuCard: {
+    marginTop: 56,
+    marginLeft: 12,
+    minWidth: 160,
+    backgroundColor: "rgba(15,23,42,0.97)",
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: BORDER_SOFT,
+  },
+  moreMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    gap: 8,
+  },
+  moreMenuText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: TEXT_LIGHT,
   },
   statBadge: {
     flexDirection: "row",
