@@ -1,9 +1,11 @@
 import { StyleSheet, Text, View, TouchableOpacity, Image, TextInput, Platform, ScrollView, KeyboardAvoidingView, Dimensions, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
+import LottieView from "lottie-react-native";
 import type { UserSearchResult } from "../../utils/usersApi";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, type ChatMessage } from "../../utils/messagesApi";
+import diceAnim from "../../assets/animations/dice.json";
 
 type CurrentUser = {
   id?: string;
@@ -34,6 +36,16 @@ const EMOJI_ROWS: string[][] = [
   ["😅", "😆", "😎", "🙂", "😃", "🎲"],
 ];
 
+function parseDiceFromText(text: string | null | undefined): { isDice: boolean; value: number | null } {
+  if (!text) return { isDice: false, value: null };
+  if (!text.startsWith("🎲")) return { isDice: false, value: null };
+  const match = text.match(/(\d+)/);
+  if (!match) return { isDice: false, value: null };
+  const num = parseInt(match[1], 10);
+  if (!Number.isFinite(num) || num < 1 || num > 6) return { isDice: false, value: null };
+  return { isDice: true, value: num };
+}
+
 function fmtDuration(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
@@ -42,11 +54,31 @@ function fmtDuration(sec: number): string {
 
 export default function ChatScreen({ me, other, onBack }: Props) {
   type LocalStatus = "sending" | "sent" | "failed";
+
+  const diceFaceForValue = (value: number | null | undefined) => {
+    switch (value) {
+      case 1:
+        return require("../../assets/animations/h.jpd.png");
+      case 2:
+        return require("../../assets/animations/pngtree-set-of-6-cube-dice-with-six-different-dots-number-vector-png-image_9267866 (1).png");
+      case 3:
+        return require("../../assets/animations/pngtree-set-of-6-cube-dice-with-six-different-dots-number-vector-png-image_9267866 (2).png");
+      case 4:
+        return require("../../assets/animations/pngtree-set-of-6-cube-dice-with-six-different-dots-number-vector-png-image_9267866 (3).png");
+      case 5:
+        return require("../../assets/animations/pngtree-set-of-6-cube-dice-with-six-different-dots-number-vector-png-image_9267866 (4).png");
+      case 6:
+      default:
+        return require("../../assets/animations/pngtree-set-of-6-cube-dice-with-six-different-dots-number-vector-png-image_9267866.png");
+    }
+  };
+
   type LocalChatMessage = ChatMessage & {
     status?: LocalStatus;
     replyToText?: string | null;
     specialType?: "dice" | "rps";
     specialAnimating?: boolean;
+    diceValue?: number | null;
   };
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [text, setText] = useState("");
@@ -67,7 +99,18 @@ export default function ChatScreen({ me, other, onBack }: Props) {
     let cancelled = false;
     fetchThread(other.id).then((list) => {
       if (cancelled) return;
-      setMessages(list.map((m) => ({ ...m, status: "sent" })));
+      setMessages(
+        list.map((m) => {
+          const { isDice, value } = parseDiceFromText(m.text);
+          return {
+            ...m,
+            status: "sent" as LocalStatus,
+            specialType: isDice ? "dice" : undefined,
+            specialAnimating: false,
+            diceValue: isDice ? value : null,
+          };
+        })
+      );
       setTimeout(() => {
         scrollRef.current?.scrollToEnd({ animated: false });
       }, 50);
@@ -239,62 +282,71 @@ export default function ChatScreen({ me, other, onBack }: Props) {
 
   const handleSendDice = useCallback(() => {
     if (!me?.id) return;
-    const faces = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
     const id = `local-dice-${Date.now()}`;
     const optimistic: LocalChatMessage = {
       id,
       fromId: me.id,
       toId: other.id,
-      text: "🎲",
+      text: "🎲", // النص البسيط الذي يُرسل للبك-إند
       createdAt: new Date().toISOString(),
       status: "sending",
       specialType: "dice",
       specialAnimating: true,
+      diceValue: null,
     };
     setMessages((prev) => [...prev, optimistic]);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 30);
 
-    const totalSteps = 18; // ~2 ثانية (18 * 110ms)
-    const finalIndex = Math.floor(Math.random() * faces.length);
+    // أنيميشن أرقام النرد (1-6) لمدة تقريبية ~2 ثانية
+    const totalSteps = 16;
+    const intervalMs = 120;
+    let step = 0;
 
-    const spin = (step: number) => {
+    const timer = setInterval(() => {
+      step += 1;
+
+      // خطوة دوران: إظهار رقم عشوائي
       if (step < totalSteps) {
+        const tempValue = Math.floor(Math.random() * 6) + 1;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === id
-              ? { ...m, text: faces[step % faces.length] }
-              : m
+            m.id === id ? { ...m, diceValue: tempValue } : m
           )
         );
-        setTimeout(() => spin(step + 1), 110);
-      } else {
-        const face = faces[finalIndex];
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === id
-              ? { ...m, text: face, specialAnimating: false }
-              : m
-          )
-        );
-        // إرسال النتيجة النهائية إلى الباك إند
-        void (async () => {
-          const sent = await sendMessage(other.id, face, null);
-          if (sent) {
-            setMessages((prev) =>
-              prev.map((m) => (m.id === id ? { ...sent, status: "sent" } : m))
-            );
-          } else {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === id ? { ...m, status: "failed" } : m
-              )
-            );
-          }
-        })();
+        return;
       }
-    };
 
-    spin(0);
+      // إيقاف التايمر واختيار النتيجة النهائية
+      clearInterval(timer);
+      const finalValue = Math.floor(Math.random() * 6) + 1;
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? { ...m, diceValue: finalValue, specialAnimating: false }
+            : m
+        )
+      );
+
+      // إرسال النتيجة النهائية إلى الباك إند كنص (مثلاً "🎲 5")
+      const finalText = `🎲 ${finalValue}`;
+      void (async () => {
+        const sent = await sendMessage(other.id, finalText, null);
+        if (sent) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id ? { ...sent, status: "sent", specialType: "dice", diceValue: finalValue } : m
+            )
+          );
+        } else {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id ? { ...m, status: "failed" } : m
+            )
+          );
+        }
+      })();
+    }, intervalMs);
   }, [me?.id, other.id]);
 
   const handleSendRps = useCallback(() => {
@@ -453,6 +505,40 @@ export default function ChatScreen({ me, other, onBack }: Props) {
   const renderBubbleContent = (m: LocalChatMessage, isMine: boolean, status: LocalStatus) => {
     const isVoice = !!m.audioUrl;
     const dur = m.audioDurationSeconds ?? 0;
+    const isDice = m.specialType === "dice";
+    const isRps =
+      m.specialType === "rps" ||
+      /[✊✋✌️]/.test(m.text || "");
+
+    if (isDice) {
+      return (
+        <View style={styles.specialBubbleCenter}>
+          {m.specialAnimating && (
+            <LottieView
+              source={diceAnim}
+              autoPlay
+              loop
+              style={styles.diceLottie}
+            />
+          )}
+          {!m.specialAnimating && (
+            <Image
+              source={diceFaceForValue(m.diceValue ?? null)}
+              style={styles.diceImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      );
+    }
+
+    if (isRps) {
+      return (
+        <View style={styles.specialBubbleCenter}>
+          <Text style={styles.rpsEmoji}>{m.text}</Text>
+        </View>
+      );
+    }
 
     if (isVoice) {
       const loading = loadingVoiceId === m.id;
@@ -868,11 +954,15 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   diceEmoji: {
-    fontSize: 32,
+    fontSize: 26,
   },
   diceLottie: {
-    width: 120,
-    height: 120,
+    width: 40,
+    height: 40,
+  },
+  diceImage: {
+    width: 30,
+    height: 40,
   },
   rpsEmoji: {
     fontSize: 32,
