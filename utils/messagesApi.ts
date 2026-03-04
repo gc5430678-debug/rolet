@@ -1,5 +1,7 @@
 import axios from "axios";
+import { Buffer } from "buffer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system";
 import { API_BASE_URL } from "./authHelper";
 
 export type InboxItem = {
@@ -18,6 +20,9 @@ export type ChatMessage = {
   toId: string;
   text: string;
   createdAt: string;
+  replyToText?: string | null;
+  audioUrl?: string | null;
+  audioDurationSeconds?: number | null;
 };
 
 async function getAuthHeaders() {
@@ -25,12 +30,62 @@ async function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function sendMessage(toUserId: string, text: string): Promise<ChatMessage | null> {
+const CACHE_KEYS = {
+  inbox: "cache_messages_inbox_v1",
+  threadPrefix: "cache_messages_thread_v1:",
+} as const;
+
+async function getCachedJson<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function setCachedJson<T>(key: string, value: T): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore caching errors
+  }
+}
+
+export async function uploadVoiceMessage(uri: string): Promise<{ audioUrl: string } | null> {
+  try {
+    const token = await AsyncStorage.getItem("token");
+    if (!token) return null;
+    const formData = new FormData();
+    formData.append("voice", {
+      uri,
+      type: "audio/m4a",
+      name: "voice.m4a",
+    } as any);
+    const res = await axios.post(`${API_BASE_URL}/api/messages/upload-voice`, formData, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
+      timeout: 15000,
+    });
+    if (res.data?.success && res.data?.audioUrl) return { audioUrl: res.data.audioUrl };
+  } catch (err) {
+    console.log("uploadVoiceMessage error:", err);
+  }
+  return null;
+}
+
+export async function sendMessage(
+  toUserId: string,
+  text: string,
+  replyToText?: string | null,
+  audioUrl?: string | null,
+  audioDurationSeconds?: number | null
+): Promise<ChatMessage | null> {
   try {
     const headers = await getAuthHeaders();
     const res = await axios.post(
       `${API_BASE_URL}/api/messages/send`,
-      { toUserId, text },
+      { toUserId, text, replyToText: replyToText ?? null, audioUrl: audioUrl ?? null, audioDurationSeconds: audioDurationSeconds ?? null },
       { headers, timeout: 8000 }
     );
     if (res.data?.success && res.data?.message) {
@@ -41,6 +96,9 @@ export async function sendMessage(toUserId: string, text: string): Promise<ChatM
         toId: m.toId,
         text: m.text,
         createdAt: m.createdAt,
+        replyToText: m.replyToText ?? null,
+        audioUrl: m.audioUrl ?? null,
+        audioDurationSeconds: m.audioDurationSeconds ?? null,
       };
     }
   } catch (err) {
@@ -57,12 +115,14 @@ export async function fetchInbox(): Promise<InboxItem[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.messages)) {
-      return res.data.messages as InboxItem[];
+      const list = res.data.messages as InboxItem[];
+      await setCachedJson(CACHE_KEYS.inbox, list);
+      return list;
     }
   } catch (err) {
     console.log("fetchInbox error:", err);
   }
-  return [];
+  return await getCachedJson<InboxItem[]>(CACHE_KEYS.inbox, []);
 }
 
 export async function fetchThread(otherId: string): Promise<ChatMessage[]> {
@@ -73,11 +133,58 @@ export async function fetchThread(otherId: string): Promise<ChatMessage[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.messages)) {
-      return res.data.messages as ChatMessage[];
+      const list = res.data.messages as ChatMessage[];
+      await setCachedJson(`${CACHE_KEYS.threadPrefix}${otherId}`, list);
+      return list;
     }
   } catch (err) {
     console.log("fetchThread error:", err);
   }
-  return [];
+  return await getCachedJson<ChatMessage[]>(`${CACHE_KEYS.threadPrefix}${otherId}`, []);
+}
+
+/** يستخرج اسم الملف من audioUrl ويُرجع رابط التشغيل مع التوكن */
+export async function getVoicePlaybackUrl(audioUrl: string | null | undefined): Promise<string | null> {
+  if (!audioUrl) return null;
+  const filename = audioUrl.replace(/^.*\//, "").trim();
+  if (!filename || !filename.endsWith(".m4a")) return null;
+  const token = await AsyncStorage.getItem("token");
+  if (!token) return null;
+  const base = API_BASE_URL.replace(/\/$/, "");
+  return `${base}/api/messages/voice/stream/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`;
+}
+
+/** تحميل الصوت إلى ملف محلي ثم إرجاع مساره (لتجاوز 511 من loca.lt) */
+export async function fetchVoiceToLocalUri(audioUrl: string | null | undefined): Promise<string | null> {
+  const url = await getVoicePlaybackUrl(audioUrl);
+  if (!url) return null;
+  try {
+    const res = await fetch(url, { headers: { Accept: "audio/*" } });
+    if (!res.ok) return null;
+    const ab = await res.arrayBuffer();
+    const base64 = Buffer.from(ab).toString("base64");
+    const filename = (audioUrl || "").replace(/^.*\//, "").trim() || `voice_${Date.now()}.m4a`;
+    const localPath = `${FileSystem.cacheDirectory}voice_${Date.now()}_${filename}`;
+    await FileSystem.writeAsStringAsync(localPath, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return localPath;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteMessage(messageId: string): Promise<boolean> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await axios.delete(`${API_BASE_URL}/api/messages/${messageId}`, {
+      headers,
+      timeout: 8000,
+    });
+    return res.data?.success === true;
+  } catch (err) {
+    console.log("deleteMessage error:", err);
+    return false;
+  }
 }
 

@@ -25,6 +25,31 @@ async function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const CACHE_KEYS = {
+  followers: "cache_social_followers_v1",
+  friends: "cache_social_friends_v1",
+  following: "cache_social_following_v1",
+  blocked: "cache_social_blocked_v1",
+} as const;
+
+async function getCachedJson<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function setCachedJson<T>(key: string, value: T): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore caching errors
+  }
+}
+
 export async function followUser(targetUserId: string): Promise<boolean> {
   try {
     const headers = await getAuthHeaders();
@@ -61,10 +86,12 @@ export async function fetchFollowers(): Promise<SocialUser[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.followers)) {
-      return res.data.followers as SocialUser[];
+      const list = res.data.followers as SocialUser[];
+      await setCachedJson(CACHE_KEYS.followers, list);
+      return list;
     }
   } catch {}
-  return [];
+  return await getCachedJson<SocialUser[]>(CACHE_KEYS.followers, []);
 }
 
 export async function fetchFriends(): Promise<SocialUser[]> {
@@ -75,10 +102,12 @@ export async function fetchFriends(): Promise<SocialUser[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.friends)) {
-      return res.data.friends as SocialUser[];
+      const list = res.data.friends as SocialUser[];
+      await setCachedJson(CACHE_KEYS.friends, list);
+      return list;
     }
   } catch {}
-  return [];
+  return await getCachedJson<SocialUser[]>(CACHE_KEYS.friends, []);
 }
 
 export async function fetchBlocked(): Promise<BlockedUser[]> {
@@ -89,10 +118,12 @@ export async function fetchBlocked(): Promise<BlockedUser[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.blocked)) {
-      return res.data.blocked as BlockedUser[];
+      const list = res.data.blocked as BlockedUser[];
+      await setCachedJson(CACHE_KEYS.blocked, list);
+      return list;
     }
   } catch {}
-  return [];
+  return await getCachedJson<BlockedUser[]>(CACHE_KEYS.blocked, []);
 }
 
 export async function fetchFollowing(): Promise<SocialUser[]> {
@@ -103,10 +134,12 @@ export async function fetchFollowing(): Promise<SocialUser[]> {
       timeout: 8000,
     });
     if (res.data?.success && Array.isArray(res.data.following)) {
-      return res.data.following as SocialUser[];
+      const list = res.data.following as SocialUser[];
+      await setCachedJson(CACHE_KEYS.following, list);
+      return list;
     }
   } catch {}
-  return [];
+  return await getCachedJson<SocialUser[]>(CACHE_KEYS.following, []);
 }
 
 export async function acceptFriendRequest(followerUserId: string): Promise<boolean> {

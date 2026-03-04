@@ -1,6 +1,8 @@
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import axios from "axios";
+import { API_BASE_URL } from "../../utils/authHelper";
 
 type AlertButtonStyle = "default" | "cancel" | "destructive";
 
@@ -15,6 +17,8 @@ export type AppAlertOptions = {
   message?: string;
   buttons?: AppAlertButton[];
   type?: "info" | "success" | "warning" | "error";
+  autoHideMs?: number;
+  key?: string;
 };
 
 type AppAlertContextValue = {
@@ -53,6 +57,10 @@ function iconForType(type: AppAlertOptions["type"]) {
 export function AppAlertProvider({ children }: { children: React.ReactNode }) {
   const [visible, setVisible] = useState(false);
   const [options, setOptions] = useState<AppAlertOptions | null>(null);
+  const autoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastOfflineShownAtRef = useRef(0);
+  const [toastText, setToastText] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hide = useCallback(() => {
     setVisible(false);
@@ -62,6 +70,48 @@ export function AppAlertProvider({ children }: { children: React.ReactNode }) {
     setOptions(opts);
     setVisible(true);
   }, []);
+
+  const showToast = useCallback((text: string, durationMs = 900) => {
+    setToastText(text);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastText(null);
+    }, durationMs);
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!options?.autoHideMs) return;
+    if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+    autoHideTimerRef.current = setTimeout(() => {
+      setVisible(false);
+    }, options.autoHideMs);
+    return () => {
+      if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+      autoHideTimerRef.current = null;
+    };
+  }, [visible, options?.autoHideMs]);
+
+  // تنبيه انقطاع الباك اند — يظهر كل 2 ثانية كتوسيت خفيف
+  useEffect(() => {
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        await axios.get(`${API_BASE_URL}/health`, { timeout: 1500 });
+      } catch {
+        if (cancelled) return;
+        const now = Date.now();
+        if (now - lastOfflineShownAtRef.current < 1900) return;
+
+        lastOfflineShownAtRef.current = now;
+        showToast("انتهت مدة الاستجابة", 900);
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [showToast]);
 
   const value = useMemo(() => ({ show, hide }), [show, hide]);
 
@@ -76,6 +126,13 @@ export function AppAlertProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppAlertContext.Provider value={value}>
       {children}
+      {!!toastText && (
+        <View pointerEvents="none" style={styles.toastWrap}>
+          <View style={styles.toastPill}>
+            <Text style={styles.toastText}>{toastText}</Text>
+          </View>
+        </View>
+      )}
       <Modal visible={visible} transparent animationType="fade" onRequestClose={hide}>
         <Pressable style={styles.overlay} onPress={hide}>
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
@@ -131,6 +188,28 @@ export function AppAlertProvider({ children }: { children: React.ReactNode }) {
 }
 
 const styles = StyleSheet.create({
+  toastWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toastPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(2, 6, 23, 0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.22)",
+  },
+  toastText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(241, 245, 249, 0.96)",
+  },
   overlay: {
     flex: 1,
     backgroundColor: BG,
