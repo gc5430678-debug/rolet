@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import type { UserSearchResult } from "../../utils/usersApi";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, fetchVoiceToLocalUri, type ChatMessage } from "../../utils/messagesApi";
+import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, type ChatMessage } from "../../utils/messagesApi";
 
 type CurrentUser = {
   id?: string;
@@ -240,23 +240,34 @@ export default function ChatScreen({ me, other, onBack }: Props) {
     if (loadingVoiceId) return;
     setLoadingVoiceId(msg.id);
     try {
-      const localUri = await fetchVoiceToLocalUri(msg.audioUrl);
-      if (!localUri) {
-        setLoadingVoiceId(null);
-        return;
-      }
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: false,
         shouldDuckAndroid: true,
         playThroughEarpieceAndroid: false,
+        interruptionModeAndroid: 1,
+        interruptionModeIOS: 1,
       });
       if (soundRef.current) await soundRef.current.unloadAsync();
+
+      let playUri: string | null = await fetchVoiceToLocalUri(msg.audioUrl);
+      if (playUri && !playUri.startsWith("file://")) playUri = `file://${playUri}`;
+
+      if (!playUri) {
+        playUri = await getVoicePlaybackUrl(msg.audioUrl);
+      }
+
+      if (!playUri) {
+        setLoadingVoiceId(null);
+        return;
+      }
+
       const { sound } = await Audio.Sound.createAsync(
-        { uri: localUri },
-        { shouldPlay: true, isLooping: false }
+        { uri: playUri },
+        { shouldPlay: true, isLooping: false, volume: 1 }
       );
+      await sound.setVolumeAsync(1);
       soundRef.current = sound;
       setPlayingId(msg.id);
       setPlaybackPosition(0);

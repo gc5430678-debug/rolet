@@ -1,7 +1,7 @@
 import axios from "axios";
 import { Buffer } from "buffer";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { API_BASE_URL } from "./authHelper";
 
 export type InboxItem = {
@@ -157,19 +157,35 @@ export async function getVoicePlaybackUrl(audioUrl: string | null | undefined): 
 /** تحميل الصوت إلى ملف محلي ثم إرجاع مساره (لتجاوز 511 من loca.lt) */
 export async function fetchVoiceToLocalUri(audioUrl: string | null | undefined): Promise<string | null> {
   const url = await getVoicePlaybackUrl(audioUrl);
-  if (!url) return null;
+  if (!url) {
+    console.log("[voice] getVoicePlaybackUrl returned null");
+    return null;
+  }
   try {
-    const res = await fetch(url, { headers: { Accept: "audio/*" } });
-    if (!res.ok) return null;
-    const ab = await res.arrayBuffer();
+    const res = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 20000,
+      headers: { "Bypass-Tunnel-Reminder": "true" },
+    });
+    const ab = res.data as ArrayBuffer;
+    if (!ab || (ab as any).byteLength < 100) {
+      console.log("[voice] response too small or invalid");
+      return null;
+    }
     const base64 = Buffer.from(ab).toString("base64");
     const filename = (audioUrl || "").replace(/^.*\//, "").trim() || `voice_${Date.now()}.m4a`;
-    const localPath = `${FileSystem.cacheDirectory}voice_${Date.now()}_${filename}`;
+    const localPath = `${FileSystem.cacheDirectory}voice_${Date.now()}_${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
     await FileSystem.writeAsStringAsync(localPath, base64, {
-      encoding: FileSystem.EncodingType.Base64,
+      encoding: "base64",
     });
+    const exists = await FileSystem.getInfoAsync(localPath, { size: true });
+    if (!exists.exists || (exists.size ?? 0) < 100) {
+      console.log("[voice] file write failed or too small", exists);
+      return null;
+    }
     return localPath;
-  } catch {
+  } catch (e) {
+    console.log("[voice] fetchVoiceToLocalUri error:", e?.message || e);
     return null;
   }
 }
