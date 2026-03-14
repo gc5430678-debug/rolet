@@ -24,7 +24,7 @@ import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { API_BASE_URL } from "../../utils/authHelper";
 import { fetchMoments, deleteMoment, fetchMomentLikers, type Moment, type MomentLiker } from "../../utils/momentsApi";
 import { Video, ResizeMode } from "expo-av";
-import { useAppAlert } from "../components/AppAlertProvider";
+import { useAppAlert } from "../../components/AppAlertProvider";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const SLIDER_HEIGHT = 320;

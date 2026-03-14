@@ -12,6 +12,8 @@ export type SocialUser = {
   age: number | null;
   country: string;
   gender: string;
+  /** المدينة أو الموقع — اختياري */
+  location?: string;
 };
 
 export type BlockRelation = "blocked" | "blocked_me" | "mutual";
@@ -30,6 +32,7 @@ const CACHE_KEYS = {
   friends: "cache_social_friends_v1",
   following: "cache_social_following_v1",
   blocked: "cache_social_blocked_v1",
+  visitors: "cache_social_visitors_v1",
 } as const;
 
 async function getCachedJson<T>(key: string, fallback: T): Promise<T> {
@@ -195,4 +198,36 @@ export async function unblockUser(targetUserId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** تسجيل زيارة بروفايل — يُستدعى عند فتح ومشاهدة بروفايل مستخدم آخر */
+export async function recordProfileVisit(profileUserId: string): Promise<boolean> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await axios.post(
+      `${API_BASE_URL}/api/profile-visits/record`,
+      { profileUserId },
+      { headers, timeout: 8000 }
+    );
+    return res.data?.success === true;
+  } catch {
+    return false;
+  }
+}
+
+/** جلب قائمة الزوار الذين شاهدوا بروفايلي */
+export async function fetchProfileVisitors(): Promise<SocialUser[]> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await axios.get(`${API_BASE_URL}/api/profile-visits`, {
+      headers,
+      timeout: 8000,
+    });
+    if (res.data?.success && Array.isArray(res.data.visitors)) {
+      const list = res.data.visitors as SocialUser[];
+      await setCachedJson(CACHE_KEYS.visitors, list);
+      return list;
+    }
+  } catch {}
+  return await getCachedJson<SocialUser[]>(CACHE_KEYS.visitors, []);
 }

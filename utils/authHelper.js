@@ -158,3 +158,32 @@ export async function checkAuthStatus() {
     return { authenticated: false, reason: "error" };
   }
 }
+
+/**
+ * مسح الحساب من الباك اند — يتطلب توكن صالح
+ */
+export async function deleteAccount() {
+  try {
+    const token = await AsyncStorage.getItem("token");
+    if (!token) return { success: false, reason: "no_token" };
+
+    const res = await axios.delete(`${API_BASE_URL}/api/auth/account`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+
+    if (res.data?.success) {
+      await AsyncStorage.multiRemove(["token", "user", "userId", "authEmail"]);
+      return { success: true };
+    }
+    return { success: false, reason: res.data?.message || "unknown" };
+  } catch (err) {
+    const status = err?.response?.status;
+    const msg = err?.response?.data?.message || err?.message;
+    if (status === 401 || status === 403) {
+      await AsyncStorage.multiRemove(["token", "user", "userId", "authEmail"]);
+      return { success: false, reason: "invalid_token" };
+    }
+    return { success: false, reason: msg || "network_error" };
+  }
+}

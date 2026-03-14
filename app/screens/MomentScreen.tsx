@@ -27,8 +27,17 @@ import {
   type Moment,
   type MomentLiker,
 } from "../../utils/momentsApi";
+import {
+  setLocalShareMomentClaimedAt,
+  getLocalShareMomentSecondsUntilClaim,
+  claimShareMomentBonus,
+} from "../../utils/tasksApi";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
-import { useAppAlert } from "../components/AppAlertProvider";
+import { fetchFollowing } from "../../utils/socialApi";
+import { useAppAlert } from "../../components/AppAlertProvider";
+import { useTheme } from "../_contexts/ThemeContext";
+import { useLanguage } from "../_contexts/LanguageContext";
+import { translations } from "../../utils/i18n";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const COLS = 2;
@@ -45,31 +54,26 @@ const CARD_SHADOW = Platform.select({
   android: { elevation: 4 },
 });
 
-function formatRelativeTime(input: string | Date | null | undefined): string {
+function formatRelativeTime(input: string | Date | null | undefined, lang: "ar" | "en"): string {
   if (!input) return "";
   const date = typeof input === "string" ? new Date(input) : input;
   if (isNaN(date.getTime())) return "";
-
+  const tr = translations[lang].momentScreen;
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 5) return "منذ لحظات";
-  if (diffSec < 60) return `منذ ${diffSec} ثانية`;
-
+  if (diffSec < 5) return tr.agoMoments;
+  if (diffSec < 60) return tr.agoSec.replace("{n}", String(diffSec));
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
-
+  if (diffMin < 60) return tr.agoMin.replace("{n}", String(diffMin));
   const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `منذ ${diffHours} ساعة`;
-
+  if (diffHours < 24) return tr.agoHour.replace("{n}", String(diffHours));
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 30) return `منذ ${diffDays} يوم`;
-
+  if (diffDays < 30) return tr.agoDay.replace("{n}", String(diffDays));
   const diffMonths = Math.floor(diffDays / 30);
-  if (diffMonths < 12) return `منذ ${diffMonths} شهر`;
-
+  if (diffMonths < 12) return tr.agoMonth.replace("{n}", String(diffMonths));
   const diffYears = Math.floor(diffMonths / 12);
-  return `منذ ${diffYears} سنة`;
+  return tr.agoYear.replace("{n}", String(diffYears));
 }
 
 function ageFromUser(user: { age?: number | null; dateOfBirth?: string }): number | null {
@@ -95,10 +99,12 @@ type User = {
   gender?: string;
 };
 
-type Props = { user: User };
+type Props = { user: User; onWalletUpdate?: () => void };
 
-export default function MomentScreen({ user }: Props) {
+export default function MomentScreen({ user, onWalletUpdate }: Props) {
   const { show } = useAppAlert();
+  const { theme } = useTheme();
+  const { t, lang } = useLanguage();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -116,26 +122,49 @@ export default function MomentScreen({ user }: Props) {
   const [countryFilter, setCountryFilter] = useState<string | "all">("all");
   const [genderFilter, setGenderFilter] = useState<"all" | "male" | "female">("all");
   const [countryModalVisible, setCountryModalVisible] = useState(false);
+  const [bonusModal, setBonusModal] = useState<{ reward: number } | null>(null);
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
 
   const loadMoments = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const list = await fetchMoments();
+      const [list, followingList] = await Promise.all([
+        fetchMoments(),
+        isRefresh ? fetchFollowing() : Promise.resolve(null),
+      ]);
       setMoments(list);
+      if (followingList) {
+        const ids = new Set(followingList.map((u) => u.id).filter(Boolean));
+        const uid = user.id || user.email?.split("@")[0] || "";
+        if (uid) ids.add(uid);
+        setFollowingIds(ids);
+      }
     } catch {
       setMoments([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user.id, user.email]);
 
   useEffect(() => {
     loadMoments();
   }, [loadMoments]);
 
   const currentUserId = user.id || user.email?.split("@")[0] || "";
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchFollowing().then((list) => {
+      if (!cancelled) {
+        const ids = new Set(list.map((u) => u.id).filter(Boolean));
+        if (currentUserId) ids.add(currentUserId);
+        setFollowingIds(ids);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [currentUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,7 +190,7 @@ export default function MomentScreen({ user }: Props) {
   const handleAddMoment = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      show({ title: "تنبيه", message: "يجب السماح بالوصول للصور والفيديو", type: "warning" });
+      show({ title: t("momentScreen.alert"), message: t("momentScreen.allowMedia"), type: "warning" });
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -178,8 +207,8 @@ export default function MomentScreen({ user }: Props) {
 
     if (isVideo && durationSec > MAX_VIDEO_SEC) {
       show({
-        title: "فيديو طويل",
-        message: `الحد الأقصى للفيديو ${MAX_VIDEO_SEC} ثوانٍ. المدة المختارة: ${durationSec} ثانية.`,
+        title: t("momentScreen.videoTooLong"),
+        message: t("momentScreen.videoMaxDuration").replace("{max}", String(MAX_VIDEO_SEC)).replace("{dur}", String(durationSec)),
         type: "warning",
       });
       return;
@@ -205,7 +234,7 @@ export default function MomentScreen({ user }: Props) {
         durationSeconds: isVideo ? durationSec : undefined,
         thumbnailUri,
         userId,
-        userName: user.name || "مستخدم",
+        userName: user.name || t("momentScreen.defaultUserName"),
         userAge: ageFromUser(user),
         userGender: user.gender || null,
         userCountry: user.country || null,
@@ -213,19 +242,25 @@ export default function MomentScreen({ user }: Props) {
       });
       if (moment) {
         setMoments((prev) => [moment, ...prev]);
+        const secsLeft = await getLocalShareMomentSecondsUntilClaim();
+        if (secsLeft === null || secsLeft === 0) {
+          await setLocalShareMomentClaimedAt(Date.now());
+          setBonusModal({ reward: 10 });
+          claimShareMomentBonus().then(() => onWalletUpdate?.());
+        }
       } else {
         show({
-          title: "تنبيه",
-          message: "تعذر النشر. تأكد من الاتصال أو أن الخادم يدعم اللحظات.",
+          title: t("momentScreen.alert"),
+          message: t("momentScreen.publishFailed"),
           type: "warning",
         });
       }
     } catch (e) {
-      show({ title: "خطأ", message: (e as Error)?.message || "تعذر رفع اللحظة", type: "error" });
+      show({ title: t("momentScreen.error"), message: (e as Error)?.message || t("momentScreen.uploadFailed"), type: "error" });
     } finally {
       setPosting(false);
     }
-  }, [user, show]);
+  }, [user, show, onWalletUpdate, t]);
 
   const handleLike = useCallback(async (moment: Moment, e?: any) => {
     e?.stopPropagation?.();
@@ -257,13 +292,13 @@ export default function MomentScreen({ user }: Props) {
       e?.stopPropagation?.();
       if (moment.userId !== currentUserId) return;
       show({
-        title: "حذف اللحظة",
-        message: "هل تريد حذف هذه اللحظة؟",
+        title: t("momentScreen.deleteTitle"),
+        message: t("momentScreen.deleteConfirm"),
         type: "warning",
         buttons: [
-          { text: "إلغاء", style: "cancel" },
+          { text: t("momentScreen.cancel"), style: "cancel" },
           {
-            text: "حذف",
+            text: t("momentScreen.delete"),
             style: "destructive",
             onPress: async () => {
               const ok = await deleteMoment(moment.id);
@@ -271,14 +306,14 @@ export default function MomentScreen({ user }: Props) {
                 setMoments((prev) => prev.filter((m) => m.id !== moment.id));
                 if (videoModal?.id === moment.id) closeVideo();
               } else {
-                show({ title: "خطأ", message: "تعذر الحذف", type: "error" });
+                show({ title: t("momentScreen.error"), message: t("momentScreen.deleteFailed"), type: "error" });
               }
             },
           },
         ],
       });
     },
-    [currentUserId, videoModal, closeVideo, show]
+    [currentUserId, videoModal, closeVideo, show, t]
   );
 
   const totalMyLikes = moments
@@ -288,7 +323,7 @@ export default function MomentScreen({ user }: Props) {
   const unreadLikes = Math.max(totalMyLikes - lastSeenLikesTotal, 0);
 
   const visibleMoments = (() => {
-    let list = filter === "all" ? moments : moments.filter((m) => m.userId === currentUserId);
+    let list = filter === "all" ? moments : moments.filter((m) => m.userId && followingIds.has(m.userId));
 
     if (countryFilter !== "all") {
       list = list.filter((m) => {
@@ -319,7 +354,7 @@ export default function MomentScreen({ user }: Props) {
       const list = await fetchMyMomentLikers();
       setLikers(list);
     } catch (e) {
-      setLikersError((e as Error)?.message || "تعذر جلب قائمة المعجبين");
+      setLikersError((e as Error)?.message || t("momentScreen.likersFetchError"));
     } finally {
       setLikersLoading(false);
       // اعتبار كل الإعجابات الحالية "مقروءة" بعد فتح القائمة
@@ -331,7 +366,7 @@ export default function MomentScreen({ user }: Props) {
         ).catch(() => {});
       }
     }
-  }, [totalMyLikes, currentUserId]);
+  }, [totalMyLikes, currentUserId, t]);
 
   const closeLikers = useCallback(() => {
     setLikersVisible(false);
@@ -351,10 +386,10 @@ export default function MomentScreen({ user }: Props) {
       const age = item.userAge;
       const countryCode = (isMyMoment ? user.country : item.userCountry) || "";
       const flag = countryCode ? getFlagEmoji(countryCode) : "";
-      const countryName = countryCode ? getCountryName(countryCode) : "";
+      const countryName = countryCode ? getCountryName(countryCode, lang) : "";
       const profileImage = isMyMoment ? user.profileImage : item.userProfileImage;
 
-      const createdLabel = formatRelativeTime(item.createdAt);
+      const createdLabel = formatRelativeTime(item.createdAt, lang);
 
       return (
         <View style={styles.gridItem}>
@@ -396,7 +431,7 @@ export default function MomentScreen({ user }: Props) {
                   </View>
                   {item.durationSeconds != null ? (
                     <View style={styles.durationBadge}>
-                      <Text style={styles.durationText}>{`${item.durationSeconds} ث`}</Text>
+                      <Text style={styles.durationText}>{`${item.durationSeconds} ${t("momentScreen.sec")}`}</Text>
                     </View>
                   ) : null}
                 </View>
@@ -475,21 +510,21 @@ export default function MomentScreen({ user }: Props) {
         </View>
       );
     },
-    [handleLike, openVideo, handleDelete, currentUserId, user]
+    [handleLike, openVideo, handleDelete, currentUserId, user, lang, t]
   );
 
   if (loading && moments.length === 0) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={ACCENT_SOFT} />
-        <Text style={styles.loadingText}>جاري تحميل اللحظات...</Text>
+      <View style={[styles.centered, { backgroundColor: theme.bg }]}>
+        <ActivityIndicator size="large" color={theme.accentSoft} />
+        <Text style={[styles.loadingText, { color: theme.textMuted }]}>{t("momentScreen.loading")}</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <View style={styles.headerTabs}>
           <TouchableOpacity
             style={[styles.headerTab, filter === "following" && styles.headerTabActive]}
@@ -497,7 +532,7 @@ export default function MomentScreen({ user }: Props) {
             activeOpacity={0.8}
           >
             <Text style={[styles.headerTabText, filter === "following" && styles.headerTabTextActive]}>
-              اتبع
+              {t("momentScreen.followTab")}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -506,7 +541,7 @@ export default function MomentScreen({ user }: Props) {
             activeOpacity={0.8}
           >
             <Text style={[styles.headerTabText, filter === "all" && styles.headerTabTextActive]}>
-              جميع اللحظات
+              {t("momentScreen.allTab")}
             </Text>
           </TouchableOpacity>
         </View>
@@ -570,8 +605,8 @@ export default function MomentScreen({ user }: Props) {
         ListEmptyComponent={
           <View style={styles.emptyWrap}>
             <Ionicons name="images-outline" size={56} color={TEXT_MUTED} />
-            <Text style={styles.emptyTitle}>لا توجد لحظات بعد</Text>
-            <Text style={styles.emptySub}>انشر أول لحظة بالضغط على الزر أدناه</Text>
+            <Text style={styles.emptyTitle}>{t("momentScreen.emptyTitle")}</Text>
+            <Text style={styles.emptySub}>{t("momentScreen.emptySub")}</Text>
           </View>
         }
       />
@@ -589,6 +624,20 @@ export default function MomentScreen({ user }: Props) {
         )}
       </TouchableOpacity>
 
+      {/* مودال مبروك — حصلت على 10 ذهب عند نشر لحظة */}
+      <Modal visible={!!bonusModal} transparent animationType="fade">
+        <Pressable style={styles.bonusModalOverlay} onPress={() => setBonusModal(null)}>
+          <View style={styles.bonusModalCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.bonusModalEmoji}>🎉</Text>
+            <Text style={styles.bonusModalTitle}>{t("momentScreen.congrats")}</Text>
+            <Text style={styles.bonusModalText}>{t("momentScreen.bonusReceived").replace("{amount}", String(bonusModal?.reward ?? 10))}</Text>
+            <TouchableOpacity style={styles.bonusModalBtn} onPress={() => setBonusModal(null)} activeOpacity={0.8}>
+              <Text style={styles.bonusModalBtnText}>{t("momentScreen.ok")}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       {/* مشغل الفيديو — يظهر عند الضغط على فيديو */}
       <Modal
         visible={!!videoModal}
@@ -603,17 +652,17 @@ export default function MomentScreen({ user }: Props) {
                 {videoLoading && (
                   <View style={styles.videoLoadingOverlay}>
                     <ActivityIndicator size="large" color="#fff" />
-                    <Text style={styles.videoLoadingText}>جاري تحميل الفيديو...</Text>
+                    <Text style={styles.videoLoadingText}>{t("momentScreen.loadingVideo")}</Text>
                   </View>
                 )}
                 {videoError ? (
                   <View style={styles.videoErrorWrap}>
                     <Ionicons name="alert-circle-outline" size={48} color="#f87171" />
                     <Text style={styles.videoErrorText}>{videoError}</Text>
-                    <Text style={styles.videoHintText}>افتح الرابط في المتصفح أولاً:</Text>
+                    <Text style={styles.videoHintText}>{t("momentScreen.openLinkHint")}</Text>
                     <Text style={styles.videoUrlText} selectable>https://myapi123.loca.lt</Text>
                     <TouchableOpacity style={styles.retryBtn} onPress={() => videoModal && openVideo(videoModal)}>
-                      <Text style={styles.retryText}>إعادة المحاولة</Text>
+                      <Text style={styles.retryText}>{t("momentScreen.retry")}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -632,7 +681,7 @@ export default function MomentScreen({ user }: Props) {
                     onLoad={() => setVideoLoading(false)}
                     onError={(e) => {
                       setVideoLoading(false);
-                      setVideoError("تعذر تشغيل الفيديو (511)");
+                      setVideoError(t("momentScreen.videoPlayFailed"));
                       console.log("Video error:", e);
                     }}
                   />
@@ -648,7 +697,7 @@ export default function MomentScreen({ user }: Props) {
                 onPress={() => handleDelete(videoModal)}
               >
                 <Ionicons name="trash-outline" size={24} color="#f87171" />
-                <Text style={styles.deleteVideoText}>حذف</Text>
+                <Text style={styles.deleteVideoText}>{t("momentScreen.delete")}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -665,7 +714,7 @@ export default function MomentScreen({ user }: Props) {
         <Pressable style={styles.likersOverlay} onPress={closeLikers}>
           <Pressable style={styles.likersSheet} onPress={(e) => e.stopPropagation()}>
             <View style={styles.likersHeader}>
-              <Text style={styles.likersTitle}>المستخدمون الذين أعجبوا بلحظاتك</Text>
+              <Text style={styles.likersTitle}>{t("momentScreen.likersTitle")}</Text>
               <TouchableOpacity onPress={closeLikers} style={styles.likersCloseBtn}>
                 <Ionicons name="close" size={20} color={TEXT_MUTED} />
               </TouchableOpacity>
@@ -673,12 +722,12 @@ export default function MomentScreen({ user }: Props) {
             {likersLoading ? (
               <View style={styles.likersLoading}>
                 <ActivityIndicator size="small" color={ACCENT_SOFT} />
-                <Text style={styles.likersLoadingText}>جاري التحميل...</Text>
+                <Text style={styles.likersLoadingText}>{t("momentScreen.likersLoading")}</Text>
               </View>
             ) : likersError ? (
               <Text style={styles.likersErrorText}>{likersError}</Text>
             ) : likers.length === 0 ? (
-              <Text style={styles.likersEmptyText}>لا يوجد معجبون بلحظاتك حتى الآن</Text>
+              <Text style={styles.likersEmptyText}>{t("momentScreen.likersEmpty")}</Text>
             ) : (
               <FlatList
                 data={likers}
@@ -686,14 +735,14 @@ export default function MomentScreen({ user }: Props) {
                 showsVerticalScrollIndicator
                 renderItem={({ item }) => {
                   const flag = item.country ? getFlagEmoji(item.country) : "";
-                  const countryName = item.country ? getCountryName(item.country) : "";
+                  const countryName = item.country ? getCountryName(item.country, lang) : "";
                   const genderBadgeStyle =
                     item.gender === "male"
                       ? styles.genderBadgeMale
                       : item.gender === "female"
                       ? styles.genderBadgeFemale
                       : null;
-                  const likedAtLabel = formatRelativeTime(item.lastLikedAt || null);
+                  const likedAtLabel = formatRelativeTime(item.lastLikedAt || null, lang);
                   return (
                     <View style={styles.likerRow}>
                       <View style={styles.likerAvatarWrap}>
@@ -770,7 +819,7 @@ export default function MomentScreen({ user }: Props) {
         <Pressable style={styles.likersOverlay} onPress={() => setCountryModalVisible(false)}>
           <Pressable style={styles.likersSheet} onPress={(e) => e.stopPropagation()}>
             <View style={styles.likersHeader}>
-              <Text style={styles.likersTitle}>تصفية حسب الدولة</Text>
+              <Text style={styles.likersTitle}>{t("momentScreen.filterByCountry")}</Text>
               <TouchableOpacity
                 onPress={() => setCountryModalVisible(false)}
                 style={styles.likersCloseBtn}
@@ -780,7 +829,7 @@ export default function MomentScreen({ user }: Props) {
             </View>
             <FlatList
               data={[
-                { code: "all", name: "جميع الدول", flag: "" },
+                { code: "all", name: t("momentScreen.allCountries"), flag: "" },
                 ...Array.from(
                   new Set(
                     moments
@@ -789,7 +838,7 @@ export default function MomentScreen({ user }: Props) {
                   )
                 ).map((code) => ({
                   code,
-                  name: getCountryName(code) || code,
+                  name: getCountryName(code, lang) || code,
                   flag: getFlagEmoji(code),
                 })),
               ]}
@@ -825,8 +874,8 @@ export default function MomentScreen({ user }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: PURPLE_DARK, paddingTop: 49 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: PURPLE_DARK, gap: 12 },
+  container: { flex: 1, paddingTop: 49 },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
   loadingText: { fontSize: 14, color: TEXT_MUTED },
   header: {
     paddingHorizontal: 20,
@@ -1190,5 +1239,48 @@ const styles = StyleSheet.create({
   countryNameText: {
     fontSize: 14,
     color: TEXT_LIGHT,
+  },
+  bonusModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  bonusModalCard: {
+    width: "78%",
+    maxWidth: 260,
+    backgroundColor: CARD_BG,
+    borderRadius: 16,
+    padding: 18,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(236, 72, 153, 0.4)",
+    ...CARD_SHADOW,
+  },
+  bonusModalEmoji: {
+    fontSize: 36,
+    marginBottom: 8,
+  },
+  bonusModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: TEXT_LIGHT,
+    marginBottom: 6,
+  },
+  bonusModalText: {
+    fontSize: 14,
+    color: TEXT_MUTED,
+    marginBottom: 14,
+  },
+  bonusModalBtn: {
+    backgroundColor: "#ec4899",
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+  },
+  bonusModalBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
   },
 });

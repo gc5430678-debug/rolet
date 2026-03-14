@@ -19,14 +19,39 @@ import LottieView from "lottie-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { API_BASE_URL } from "../../utils/authHelper";
+import { useLanguage } from "../_contexts/LanguageContext";
+import spinWheelAnim from "../../assets/animations/spin wheel.json";
+import giftBoxAnim from "../../assets/animations/Gift box.json";
 
 const { width } = Dimensions.get("window");
+
+// توزيع الأرباح: المستخدم 45% — المالك 55%
+// gold = 0.45 * price_usd / cost_per_gold | cost_per_gold ≈ 0.004
+// gold ≈ 112.5 * price_usd (تقريب أعداد صحيحة مناسبة)
+const TOPUP_PACKAGES: { priceUsd: number; gold: number; priceLabel: string }[] = [
+  { priceUsd: 0.35, gold: 39, priceLabel: "0.35$" },
+  { priceUsd: 0.99, gold: 111, priceLabel: "0.99$" },
+  { priceUsd: 1.99, gold: 224, priceLabel: "1.99$" },
+  { priceUsd: 4.99, gold: 561, priceLabel: "4.99$" },
+  { priceUsd: 9.99, gold: 1124, priceLabel: "9.99$" },
+  { priceUsd: 19.99, gold: 2249, priceLabel: "19.99$" },
+  { priceUsd: 49.99, gold: 5624, priceLabel: "49.99$" },
+  { priceUsd: 99.99, gold: 11249, priceLabel: "99.99$" },
+  { priceUsd: 199.99, gold: 22499, priceLabel: "199.99$" },
+  { priceUsd: 399.99, gold: 44999, priceLabel: "399.99$" },
+  { priceUsd: 499.99, gold: 56249, priceLabel: "499.99$" },
+  { priceUsd: 599.99, gold: 67499, priceLabel: "599.99$" },
+  { priceUsd: 799.99, gold: 89999, priceLabel: "799.99$" },
+  { priceUsd: 899.99, gold: 101249, priceLabel: "899.99$" },
+  { priceUsd: 999.99, gold: 112499, priceLabel: "999.99$" },
+];
 
 type Props = {
   onBack: () => void;
 };
 
 export default function TopupScreen({ onBack }: Props) {
+  const { t } = useLanguage();
   const scrollX = useRef(new Animated.Value(0)).current;
   const scrollRef = useRef<ScrollView>(null);
   const spinValue = useRef(new Animated.Value(0)).current;
@@ -177,7 +202,7 @@ export default function TopupScreen({ onBack }: Props) {
     const token = await AsyncStorage.getItem("token");
 
     if (!token) {
-      Alert.alert("تنبيه", "يجب تسجيل الدخول لتأكيد الشراء وحفظ الذهب.");
+      Alert.alert(t("topup.alert"), t("topup.loginRequired"));
       return false;
     }
 
@@ -200,10 +225,10 @@ export default function TopupScreen({ onBack }: Props) {
         setFreeGold(w.freeGold ?? 0);
         return true;
       }
-      Alert.alert("خطأ", "لم يتم حفظ الشراء. حاول مرة أخرى.");
+      Alert.alert(t("topup.error"), t("topup.purchaseFailed"));
       return false;
     } catch {
-      Alert.alert("لا يوجد اتصال", "يجب الاتصال بالإنترنت لتأكيد الشراء وحفظ الذهب في قاعدة البيانات.");
+      Alert.alert(t("topup.noConnection"), t("topup.noConnectionMsg"));
       return false;
     }
   };
@@ -252,13 +277,46 @@ export default function TopupScreen({ onBack }: Props) {
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.8}>
           <Ionicons name="arrow-forward" size={22} color="#c4b5fd" />
-          <Text style={styles.backText}>رجوع</Text>
+          <Text style={styles.backText}>{t("topup.back")}</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>شحن الرصيد</Text>
+        <Text style={styles.title}>{t("topup.title")}</Text>
         <View style={{ width: 60 }} />
       </View>
 
-      {/* Slider */}
+      {/* ١. مجموع ذهب — مشحون — مجاني (نفس النمط السابق) */}
+      <View style={styles.totalCardWrap}>
+        <View style={styles.card}>
+          <View style={styles.totalRow}>
+            <View style={styles.totalLeft}>
+              <View style={styles.coinBigOuter}>
+                <View style={styles.coinBigInner}>
+                  <Text style={styles.coinBigLetter}>🪙</Text>
+                </View>
+              </View>
+              <View>
+                <Text style={styles.cardTitle}>{t("topup.totalGold")}</Text>
+                <Text style={styles.totalValue}>{totalGold}</Text>
+              </View>
+            </View>
+            <View style={styles.totalRight}>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{t("topup.charged")} {chargedGold}</Text>
+              </View>
+              <View style={styles.badgeSecondary}>
+                <Text style={styles.badgeTextSecondary}>{t("topup.free")} {freeGold}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* ٢. مكافآت شحن — مكافأة الصندوق — ٣. باقات شحن (سكرول) */}
+      <ScrollView
+        ref={contentRef}
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.rewardSliderWrapper}>
         <LinearGradient
           colors={["#111827", "#020617"]}
@@ -278,37 +336,26 @@ export default function TopupScreen({ onBack }: Props) {
             {/* Slide 1 - مكافأة شحن */}
             <View style={styles.slide}>
               <View style={styles.wheelRow}>
-                <View style={styles.wheelContainer}>
-                  <LinearGradient
-                    colors={["#f97316", "#facc15"]}
-                    style={styles.wheelOuter}
-                  >
-                    <View style={styles.wheelInner}>
-                      <View style={styles.wheelSegmentRow}>
-                        <Text style={styles.wheelSegmentText}>+10%</Text>
-                        <Text style={styles.wheelSegmentText}>+20%</Text>
-                      </View>
-                      <View style={styles.wheelSegmentRow}>
-                        <Text style={styles.wheelSegmentText}>+50%</Text>
-                        <Text style={styles.wheelSegmentText}>x2</Text>
-                      </View>
-                      <View style={styles.wheelCenter} />
-                    </View>
-                  </LinearGradient>
-                  <View style={styles.wheelPointer} />
+                <View style={styles.wheelAnimWrap}>
+                  <LottieView
+                    source={spinWheelAnim}
+                    autoPlay
+                    loop
+                    style={styles.wheelAnim}
+                  />
                 </View>
                 <TouchableOpacity
                   activeOpacity={0.9}
                   style={styles.wheelTextBox}
                   onPress={handleOpenWheel}
                 >
-                  <Text style={styles.slideTag}>مكافأة شحن</Text>
-                  <Text style={styles.slideTitle}>اشحن واربح ذهب إضافي</Text>
+                  <Text style={styles.slideTag}>{t("topup.spinBonus")}</Text>
+                  <Text style={styles.slideTitle}>{t("topup.spinTitle")}</Text>
                   <Text style={styles.slideSub}>
-                    اضغط هنا لفتح دولاب الحظ والحصول على مكافأة إضافية على الشحن.
+                    {t("topup.spinDesc")}
                   </Text>
                   <View style={styles.slideCta}>
-                    <Text style={styles.slideCtaText}>فتح دولاب الحظ</Text>
+                    <Text style={styles.slideCtaText}>{t("topup.spinCta")}</Text>
                   </View>
                 </TouchableOpacity>
               </View>
@@ -321,35 +368,22 @@ export default function TopupScreen({ onBack }: Props) {
                 onPress={handleOpenBoxRewards}
                 style={styles.wheelRow}
               >
-                <View style={styles.wheelContainer}>
-                  <LinearGradient
-                    colors={["#4f46e5", "#7c3aed"]}
-                    style={styles.wheelOuter}
-                  >
-                    <View style={styles.wheelInner}>
-                      <View style={styles.wheelSegmentRow}>
-                        <Text style={styles.wheelSegmentText}>صندوق ذهبي</Text>
-                      </View>
-                      <View style={styles.wheelSegmentRow}>
-                        <Text style={styles.wheelSegmentText}>صندوق ماسي</Text>
-                      </View>
-                      <View style={styles.wheelSegmentRow}>
-                        <Text style={styles.wheelSegmentText}>صندوق نادر</Text>
-                      </View>
-                      <View style={styles.wheelCenter} />
-                    </View>
-                  </LinearGradient>
-                  <View style={styles.wheelPointer} />
+                <View style={styles.wheelAnimWrap}>
+                  <LottieView
+                    source={giftBoxAnim}
+                    autoPlay
+                    loop
+                    style={styles.wheelAnim}
+                  />
                 </View>
                 <View style={styles.wheelTextBox}>
-                  <Text style={styles.slideTag}>مكافآت الصندوق</Text>
-                  <Text style={styles.slideTitle}>افتح الصندوق واربح جوائز</Text>
+                  <Text style={styles.slideTag}>{t("topup.boxTag")}</Text>
+                  <Text style={styles.slideTitle}>{t("topup.boxTitle")}</Text>
                   <Text style={styles.slideSub}>
-                    اجمع الذهب وافتح صناديق المكافآت اليومية لتحصل على هدايا
-                    مميزة وعناصر نادرة داخل اللعبة.
+                    {t("topup.boxDesc")}
                   </Text>
                   <View style={styles.slideCta}>
-                    <Text style={styles.slideCtaText}>افتح الصندوق</Text>
+                    <Text style={styles.slideCtaText}>{t("topup.boxCta")}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -382,13 +416,48 @@ export default function TopupScreen({ onBack }: Props) {
         </LinearGradient>
       </View>
 
+      {/* ٣. باقات شحن */}
+      <View style={styles.content}>
+        <View style={styles.card}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{t("topup.packagesTitle")}</Text>
+            <Text style={styles.sectionSubtitle}>
+              {t("topup.packagesDesc")}
+            </Text>
+          </View>
+
+          <View style={styles.carch}>
+            {TOPUP_PACKAGES.map((pkg, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.offerContainer}
+                activeOpacity={0.9}
+                onPress={() => handleOfferPress(pkg.gold, pkg.priceLabel)}
+              >
+                <View style={styles.coin3DOuter}>
+                  <View style={styles.coin3DMiddle}>
+                    <View style={styles.coin3DInner}>
+                      <Text style={styles.coin3DText}>🪙</Text>
+                    </View>
+                  </View>
+                </View>
+                <Text style={styles.offerAmount}>{pkg.gold}</Text>
+                <View style={styles.offerDivider} />
+                <Text style={styles.offerPrice}>{pkg.priceLabel}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </View>
+      </ScrollView>
+
       {/* Wheel of Fortune Modal */}
       <Modal visible={wheelVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>دولاب مكافآت الشحن</Text>
+            <Text style={styles.modalTitle}>{t("topup.wheelTitle")}</Text>
             <Text style={styles.modalSubtitle}>
-              قم بالدوران لتحصل على نسبة ذهب إضافي فوق عملية الشحن الحالية.
+              {t("topup.wheelDesc")}
             </Text>
 
             <View style={styles.modalWheelWrapper}>
@@ -426,7 +495,7 @@ export default function TopupScreen({ onBack }: Props) {
             {rewardText && (
               <View style={styles.rewardBanner}>
                 <Text style={styles.rewardBannerValue}>
-                  {`مبروك! ${rewardText} ذهب إضافي`}
+                  {`${t("topup.congrats")} ${rewardText} ${t("topup.extraGold")}`}
                 </Text>
               </View>
             )}
@@ -437,7 +506,7 @@ export default function TopupScreen({ onBack }: Props) {
                 onPress={() => setWheelVisible(false)}
                 disabled={isSpinning}
               >
-                <Text style={styles.modalButtonSecondaryText}>إغلاق</Text>
+                <Text style={styles.modalButtonSecondaryText}>{t("topup.close")}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -452,10 +521,10 @@ export default function TopupScreen({ onBack }: Props) {
               >
                 <Text style={styles.modalButtonPrimaryText}>
                   {isSpinning
-                    ? "جارِ الدوران..."
+                    ? t("topup.spinning")
                     : rewardText
-                    ? "اذهب للشحن"
-                    : "دَوِّر الدولاب"}
+                    ? t("topup.goTopup")
+                    : t("topup.spinWheel")}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -906,21 +975,21 @@ export default function TopupScreen({ onBack }: Props) {
       <Modal visible={confirmVisible} transparent animationType="fade">
         <View style={styles.confirmOverlay}>
           <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>تأكيد شراء الذهب</Text>
+            <Text style={styles.confirmTitle}>{t("topup.confirmTitle")}</Text>
             <View style={styles.confirmRow}>
-              <Text style={styles.confirmLabel}>الذهب:</Text>
+              <Text style={styles.confirmLabel}>{t("topup.gold")}:</Text>
               <Text style={styles.confirmValue}>{pendingAmount} 🪙</Text>
             </View>
             {lastBonusPercent > 0 && (
               <View style={styles.confirmRow}>
-                <Text style={styles.confirmLabel}>مكافأة شحن ({lastBonusPercent}%):</Text>
+                <Text style={styles.confirmLabel}>{t("topup.bonus")} ({lastBonusPercent}%):</Text>
                 <Text style={styles.confirmValue}>
                   +{Math.round((pendingAmount * lastBonusPercent) / 100)} 🪙
                 </Text>
               </View>
             )}
             <View style={styles.confirmRow}>
-              <Text style={styles.confirmLabel}>السعر:</Text>
+              <Text style={styles.confirmLabel}>{t("topup.price")}:</Text>
               <Text style={styles.confirmValue}>{pendingPrice}</Text>
             </View>
             <View style={styles.confirmButtons}>
@@ -933,7 +1002,7 @@ export default function TopupScreen({ onBack }: Props) {
                 }}
                 disabled={isPurchasing}
               >
-                <Text style={styles.confirmBtnCancelText}>إلغاء</Text>
+                <Text style={styles.confirmBtnCancelText}>{t("topup.cancel")}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.confirmBtn, styles.confirmBtnOk, isPurchasing && styles.confirmBtnDisabled]}
@@ -941,7 +1010,7 @@ export default function TopupScreen({ onBack }: Props) {
                 disabled={isPurchasing}
               >
                 <Text style={styles.confirmBtnOkText}>
-                  {isPurchasing ? "جاري الشراء..." : "تأكيد الشراء"}
+                  {isPurchasing ? t("topup.purchasing") : t("topup.confirm")}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -949,353 +1018,6 @@ export default function TopupScreen({ onBack }: Props) {
         </View>
       </Modal>
 
-      <ScrollView
-        ref={contentRef}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Card */}
-        <View style={styles.card}>
-          <View style={styles.totalRow}>
-            <View style={styles.totalLeft}>
-              <View style={styles.coinBigOuter}>
-                <View style={styles.coinBigInner}>
-                  <Text style={styles.coinBigLetter}>🪙</Text>
-                </View>
-              </View>
-              <View>
-                <Text style={styles.cardTitle}>مجموع الذهب</Text>
-                <Text style={styles.totalValue}>{totalGold}</Text>
-              </View>
-            </View>
-
-            <View style={styles.totalRight}>
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>مشحون {chargedGold}</Text>
-              </View>
-
-              <View style={styles.badgeSecondary}>
-                <Text style={styles.badgeTextSecondary}>مجاني {freeGold}</Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>باقات شحن الذهب</Text>
-            <Text style={styles.sectionSubtitle}>
-              اختر الباقة المناسبة لك، وكل عملية شحن تضيف مكافآت لدولاب الحظ.
-            </Text>
-          </View>
-
-          <View style={styles.carch}>
-
-  {/* Item 1 */}
-  <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(20, "0.35$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>20</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>0.35$</Text>
-  </TouchableOpacity>
-
-  {/* Item 2 */}
-  <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(110, "0.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>110</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>0.99$</Text>
-  </TouchableOpacity>
-
-  {/* Item 3 */}
-  <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(210, "1.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>210</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>1.99$</Text>
-  </TouchableOpacity>
-
-  {/* Item 4 */}
-  <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(505, "4.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>505</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>4.99$</Text>
-          </TouchableOpacity>
-          
-           <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(1121, "9.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>1121</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>9.99$</Text>
-          </TouchableOpacity>
-          
-
-
-
-            <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(2010, "19.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>2010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>19.99$</Text>
-          </TouchableOpacity>
-          
-
-
-          
-            <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(5022, "49.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>5022</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>49.99$</Text>
-  </TouchableOpacity>
-
-       
-        
-
-
-
-
-        
-            <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(10000, "99.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>10000</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>99.99$</Text>
-        </TouchableOpacity>
-        
-
-
-
-
-        
-            <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(20010, "199.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>20010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>199.99$</Text>
-          </TouchableOpacity>
-
-
-
-
-         <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(30010, "399.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>30010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>399.99$</Text>
-          </TouchableOpacity>
-
-                   <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(40010, "499.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>40010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>499.99$</Text>
-          </TouchableOpacity>
-                   <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(50010, "599.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>50010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>599.99$</Text>
-          </TouchableOpacity>
-
-                   <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(70010, "799.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>70010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>799.99$</Text>
-          </TouchableOpacity>
-
-          
-                   <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(80010, "899.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>80010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>899.99$</Text>
-          </TouchableOpacity>
-
-
-
-                   <TouchableOpacity
-    style={styles.offerContainer}
-    activeOpacity={0.9}
-    onPress={() => handleOfferPress(90010, "999.99$")}
-  >
-    <View style={styles.coin3DOuter}>
-      <View style={styles.coin3DMiddle}>
-        <View style={styles.coin3DInner}>
-          <Text style={styles.coin3DText}>🪙</Text>
-        </View>
-      </View>
-    </View>
-
-    <Text style={styles.offerAmount}>90010</Text>
-    <View style={styles.offerDivider} />
-    <Text style={styles.offerPrice}>999.99$</Text>
-          </TouchableOpacity>
-          
-
-
-          
-
-
-
-
-          </View>
-        </View>
-      </ScrollView>
     </View>
 
 
@@ -1321,6 +1043,11 @@ const styles = StyleSheet.create({
 
   title: { fontSize: 18, fontWeight: "700", color: "#fff" },
 
+  totalCardWrap: {
+    paddingHorizontal: 20,
+    marginTop: 12,
+  },
+
   rewardSliderWrapper: {
     paddingHorizontal: 20,
     marginTop: 10,
@@ -1342,9 +1069,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  wheelContainer: {
+  wheelAnimWrap: {
     width: 110,
     height: 110,
+    borderRadius: 55,
+    overflow: "hidden",
+    marginLeft: 12,
+    marginRight: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+  },
+  wheelAnim: {
+    width: 110,
+    height: 110,
+    backgroundColor: "transparent",
+  },
+
+  wheelContainer: {
+    width: 90,
+    height: 90,
     borderRadius: 55,
     justifyContent: "center",
     alignItems: "center",
@@ -1355,7 +1099,7 @@ const styles = StyleSheet.create({
   wheelOuter: {
     width: "100%",
     height: "100%",
-    borderRadius: 55,
+    borderRadius: 45,
     padding: 10,
     justifyContent: "center",
     alignItems: "center",
@@ -1380,7 +1124,7 @@ const styles = StyleSheet.create({
   },
 
   wheelSegmentText: {
-    fontSize: 10,
+    fontSize: 8,
     fontWeight: "700",
     color: "#facc15",
   },
@@ -1420,23 +1164,23 @@ const styles = StyleSheet.create({
   },
 
   slideTag: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
     color: "#a5b4fc",
-    marginBottom: 4,
+    marginBottom: 2,
   },
 
   slideTitle: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: "800",
     color: "#fff",
   },
 
   slideSub: {
-    fontSize: 13,
-    marginTop: 6,
+    fontSize: 11,
+    marginTop: 4,
     color: "#e5e7eb",
-    lineHeight: 20,
+    lineHeight: 17,
   },
 
   pagination: {
@@ -1463,21 +1207,23 @@ const styles = StyleSheet.create({
   },
 
   slideCtaText: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
     color: "#f9fafb",
   },
 
+  scrollArea: { flex: 1 },
+  scrollContent: { paddingBottom: 32 },
   content: {
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 32,
+    paddingTop: 12,
+    paddingBottom: 20,
   },
 
   card: {
     backgroundColor: "rgba(15, 23, 42, 0.95)",
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1.5,
     borderColor: "#7c3aed",
   },
@@ -1500,63 +1246,63 @@ const styles = StyleSheet.create({
   },
 
   cardTitle: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "700",
     color: "#fff",
   },
 
   totalValue: {
-    fontSize: 26,
+    fontSize: 20,
     fontWeight: "800",
     color: "#facc15",
   },
 
   badge: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
     backgroundColor: "#facc15",
   },
 
   badgeSecondary: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
     backgroundColor: "#38bdf8",
   },
 
   badgeText: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
     color: "#000",
   },
 
   badgeTextSecondary: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
     color: "#000",
   },
 
   coinBigOuter: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#3f2a11",
     alignItems: "center",
     justifyContent: "center",
   },
 
   coinBigInner: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: "#facc15",
     alignItems: "center",
     justifyContent: "center",
   },
 
   coinBigLetter: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: "800",
     color: "#fff",
   },
@@ -1567,16 +1313,16 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "800",
     color: "#e5e7eb",
-    marginBottom: 4,
+    marginBottom: 2,
   },
 
   sectionSubtitle: {
-    fontSize: 12,
+    fontSize: 10,
     color: "#9ca3af",
-    lineHeight: 18,
+    lineHeight: 15,
   },
 
   carch: {
@@ -1623,10 +1369,10 @@ coin3DMiddle: {
 
   offerContainer: {
     width: "31%",
-    marginBottom: 18,
+    marginBottom: 14,
     alignItems: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
     borderRadius: 18,
     backgroundColor: "rgba(15,23,42,0.95)",
     borderWidth: 1,
@@ -1634,7 +1380,7 @@ coin3DMiddle: {
   },
 
   offerAmount: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "900",
     color: "#facc15",
   },
@@ -1647,13 +1393,13 @@ coin3DMiddle: {
   },
 
   offerPrice: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 999,
     backgroundColor: "#22c55e",
-    width: 70,
+    width: 60,
     textAlign: "center",
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: "700",
     color: "#f9fafb",
   },

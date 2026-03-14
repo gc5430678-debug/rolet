@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -18,11 +18,23 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Video, ResizeMode } from "expo-av";
 import * as Clipboard from "expo-clipboard";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
+import { useLanguage } from "../_contexts/LanguageContext";
+import { translations } from "../../utils/i18n";
 import { API_BASE_URL } from "../../utils/authHelper";
 import { fetchMoments, toggleMomentLike, type Moment } from "../../utils/momentsApi";
-import type { UserSearchResult } from "../../utils/usersApi";
-import { followUser, unfollowUser, isFollowing, acceptFriendRequest, blockUser, unblockUser, fetchBlocked } from "../../utils/socialApi";
-import { useAppAlert } from "../components/AppAlertProvider";
+import { searchUsersById, type UserSearchResult } from "../../utils/usersApi";
+import { sendMessage, buildSenderForNotification } from "../../utils/messagesApi";
+import { fetchWallet } from "../../utils/walletApi";
+import { GiftModal, type GiftKey } from "../../components/GiftModal";
+import { followUser, unfollowUser, isFollowing, acceptFriendRequest, blockUser, unblockUser, fetchBlocked, recordProfileVisit } from "../../utils/socialApi";
+import { fetchProfileLikes, likeProfile } from "../../utils/profileLikesApi";
+import {
+  setLocalAddFriendClaimedAt,
+  getLocalAddFriendSecondsUntilClaim,
+  claimAddFriendBonus,
+} from "../../utils/tasksApi";
+import { useAppAlert } from "../../components/AppAlertProvider";
+import { usePrivileges } from "../_contexts/PrivilegesContext";
 
 function getFullMediaUrl(url: string): string {
   if (!url) return "";
@@ -51,21 +63,22 @@ const CARD_SHADOW = Platform.select({
   android: { elevation: 4 },
 });
 
-function formatRelativeTime(input: string | Date | null | undefined): string {
+function formatRelativeTime(input: string | Date | null | undefined, lang: "ar" | "en"): string {
   if (!input) return "";
   const date = typeof input === "string" ? new Date(input) : input;
   if (isNaN(date.getTime())) return "";
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return "منذ لحظات";
+  const tr = translations[lang].userProfile;
+  if (diffSec < 60) return tr.agoMoments;
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `منذ ${diffMin} د`;
+  if (diffMin < 60) return tr.agoMin.replace("{n}", String(diffMin));
   const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return `منذ ${diffHours} س`;
+  if (diffHours < 24) return tr.agoHour.replace("{n}", String(diffHours));
   const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 30) return `منذ ${diffDays} يوم`;
-  return new Date(input).toLocaleDateString("ar-SA", { month: "short", day: "numeric" });
+  if (diffDays < 30) return tr.agoDay.replace("{n}", String(diffDays));
+  return new Date(input).toLocaleDateString(lang === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric" });
 }
 
 type CurrentUser = {
@@ -85,10 +98,14 @@ type Props = {
   isFriend?: boolean;
   onAcceptFriend?: () => void;
   onOpenChat?: (user: UserSearchResult) => void;
+  onWalletUpdate?: () => void;
+  onOpenTopup?: () => void;
 };
 
-export default function UserProfileScreen({ user, currentUser, onBack, fromAdmirers, isFriend, onAcceptFriend, onOpenChat }: Props) {
+export default function UserProfileScreen({ user, currentUser, onBack, fromAdmirers, isFriend, onAcceptFriend, onOpenChat, onWalletUpdate, onOpenTopup }: Props) {
   const { show } = useAppAlert();
+  const { t, lang } = useLanguage();
+  const { hideWealthMagic } = usePrivileges();
   const [copied, setCopied] = useState(false);
   const [isFollowed, setIsFollowed] = useState(false);
   const [acceptedAsFriend, setAcceptedAsFriend] = useState(isFriend ?? false);
@@ -102,6 +119,42 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
   const [refreshing, setRefreshing] = useState(false);
   const [mediaModal, setMediaModal] = useState<Moment | null>(null);
   const [moreMenuVisible, setMoreMenuVisible] = useState(false);
+  const [bonusModal, setBonusModal] = useState<{ reward: number } | null>(null);
+  const visitRecordedRef = useRef(false);
+  const [displayUser, setDisplayUser] = useState<UserSearchResult>(user);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const [showGiftModal, setShowGiftModal] = useState(false);
+  const [goldBalance, setGoldBalance] = useState(0);
+  const [chargedGold, setChargedGold] = useState(0);
+  const [freeGold, setFreeGold] = useState(0);
+  const [profileLikeCount, setProfileLikeCount] = useState(0);
+  const [profileLikedByMe, setProfileLikedByMe] = useState(false);
+  const [likeToast, setLikeToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDisplayUser(user);
+  }, [user]);
+
+  useEffect(() => {
+    fetchProfileLikes(user.id).then((r) => {
+      if (r) {
+        setProfileLikeCount(r.likeCount);
+        setProfileLikedByMe(r.likedByMe);
+      }
+    });
+  }, [user.id]);
+
+  useEffect(() => {
+    const missing = user.age == null || !user.country || !user.gender;
+    if (!missing) return;
+    const uid = user.id;
+    searchUsersById(uid).then((users) => {
+      const found = users.find((u) => u.id === uid);
+      if (found) {
+        setDisplayUser((prev) => prev.id === uid ? { ...prev, age: found.age ?? prev.age, country: found.country || prev.country, gender: found.gender || prev.gender } : prev);
+      }
+    });
+  }, [user]);
 
   const copyId = async () => {
     await Clipboard.setStringAsync(user.id);
@@ -117,13 +170,13 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
       const list = await fetchMoments();
       setMoments(list.filter((m) => m.userId === user.id));
     } catch {
-      setMomentsError("تعذر جلب اللحظات");
+      setMomentsError(t("userProfile.momentsLoadError"));
       setMoments([]);
     } finally {
       setMomentsLoading(false);
       setRefreshing(false);
     }
-  }, [user.id]);
+  }, [user.id, t]);
 
   useEffect(() => {
     if (activeTab === "moment") loadMoments();
@@ -132,6 +185,16 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
   useEffect(() => {
     if (!currentUser?.id) return;
     isFollowing(user.id).then(setIsFollowed);
+  }, [user.id, currentUser?.id]);
+
+  useEffect(() => {
+    visitRecordedRef.current = false;
+  }, [user.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id || currentUser.id === user.id || visitRecordedRef.current) return;
+    visitRecordedRef.current = true;
+    recordProfileVisit(user.id);
   }, [user.id, currentUser?.id]);
 
   useEffect(() => {
@@ -156,8 +219,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
     if (currentUser.id === user.id) return;
     if (blockedMe) {
       show({
-        title: "لا يمكنك الإضافة",
-        message: `تم حظرك من قبل المستخدم ${user.name} (${user.id})، لا يمكنك المتابعة أو قبول الطلب حتى يتم إلغاء الحظر.`,
+        title: t("userProfile.cannotAdd"),
+        message: t("userProfile.blockedByUser").replace("{name}", user.name).replace("{id}", user.id),
         type: "error",
       });
       return;
@@ -170,8 +233,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
         setAcceptedAsFriend(false);
       } else {
         show({
-          title: "انتهت مدة الاستجابة",
-          message: "تعذر تنفيذ الطلب. تحقق من اتصال الإنترنت وحاول مرة أخرى.",
+          title: t("userProfile.requestTimeout"),
+          message: t("userProfile.requestFailed"),
           type: "error",
         });
       }
@@ -179,15 +242,21 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
       const ok = await followUser(user.id);
       if (ok) {
         setIsFollowed(true);
+        const secsLeft = await getLocalAddFriendSecondsUntilClaim();
+        if (secsLeft === null || secsLeft === 0) {
+          await setLocalAddFriendClaimedAt(Date.now());
+          setBonusModal({ reward: 25 });
+          claimAddFriendBonus().then(() => onWalletUpdate?.());
+        }
       } else {
         show({
-          title: "انتهت مدة الاستجابة",
-          message: "تعذر تنفيذ الطلب. تحقق من اتصال الإنترنت وحاول مرة أخرى.",
+          title: t("userProfile.requestTimeout"),
+          message: t("userProfile.requestFailed"),
           type: "error",
         });
       }
     }
-  }, [currentUser, user.id, isFollowed, blockedMe, show, user.name]);
+  }, [currentUser, user.id, isFollowed, blockedMe, show, user.name, onWalletUpdate, t]);
 
   const handleAcceptFriend = useCallback(async () => {
     if (accepting || acceptedAsFriend) return;
@@ -197,8 +266,14 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
     if (ok) {
       setAcceptedAsFriend(true);
       onAcceptFriend?.();
+      const secsLeft = await getLocalAddFriendSecondsUntilClaim();
+      if (secsLeft === null || secsLeft === 0) {
+        await setLocalAddFriendClaimedAt(Date.now());
+        setBonusModal({ reward: 25 });
+        claimAddFriendBonus().then(() => onWalletUpdate?.());
+      }
     }
-  }, [user.id, accepting, acceptedAsFriend, onAcceptFriend]);
+  }, [user.id, accepting, acceptedAsFriend, onAcceptFriend, onWalletUpdate]);
 
   const handleLike = useCallback(async (moment: Moment) => {
     const res = await toggleMomentLike(moment.id);
@@ -208,20 +283,88 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
       );
   }, []);
 
-  const genderColor = user.gender === "female" ? "#f472b6" : user.gender === "male" ? "#60a5fa" : ACCENT_SOFT;
-  const genderBg = user.gender === "female" ? "rgba(244,114,182,0.35)" : user.gender === "male" ? "rgba(96,165,250,0.35)" : ACCENT_MUTED;
+  const genderColor = displayUser.gender === "female" ? "#f472b6" : displayUser.gender === "male" ? "#60a5fa" : ACCENT_SOFT;
+
+  useEffect(() => {
+    if (showGiftModal) {
+      fetchWallet().then((w) => {
+        if (w) {
+          setGoldBalance(w.totalGold ?? 0);
+          setChargedGold(w.chargedGold ?? 0);
+          setFreeGold(w.freeGold ?? 0);
+        }
+      });
+    }
+  }, [showGiftModal]);
+
+  const handleLikeProfile = useCallback(async () => {
+    if (profileLikedByMe) {
+      setLikeToast(t("userProfile.alreadyLiked"));
+      setTimeout(() => setLikeToast(null), 2000);
+      return;
+    }
+    const res = await likeProfile(user.id);
+    if (res.success) {
+      setProfileLikedByMe(true);
+      if (res.alreadyLiked) {
+        setLikeToast(t("userProfile.alreadyLiked"));
+      } else {
+        setProfileLikeCount((c) => (res.likeCount != null ? res.likeCount : c + 1));
+        setLikeToast(t("userProfile.likedSuccess"));
+      }
+      setTimeout(() => setLikeToast(null), 2000);
+    }
+  }, [user.id, profileLikedByMe, t]);
+
+  const handleOpenGiftProfile = useCallback(() => {
+    if (currentUser?.id === user.id) {
+      setActiveTab("info");
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+    } else {
+      setShowGiftModal(true);
+    }
+  }, [currentUser?.id, user.id]);
+
+  const handleSendGift = useCallback(
+    async (giftKey: GiftKey, amount: number, quantity: number) => {
+      if (!currentUser?.id || currentUser.id === user.id) return;
+      if (goldBalance < amount) {
+        setShowGiftModal(false);
+        onOpenTopup?.();
+        return;
+      }
+      const text = `GIFT:${giftKey}:${amount}`;
+      const result = await sendMessage(
+        user.id,
+        text,
+        null,
+        null,
+        null,
+        null,
+        null,
+        buildSenderForNotification(currentUser ? { name: currentUser.name, profileImage: currentUser.profileImage } : null),
+        amount
+      );
+      if (result) {
+        onWalletUpdate?.();
+        onOpenChat?.(user);
+      }
+    },
+    [currentUser, user, goldBalance, onWalletUpdate, onOpenChat, onOpenTopup]
+  );
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.8}>
           <Ionicons name="arrow-forward" size={22} color={ACCENT_SOFT} />
-          <Text style={styles.backText}>رجوع</Text>
+          <Text style={styles.backText}>{t("userProfile.back")}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>الملف الشخصي</Text>
+        <Text style={styles.headerTitle}>{t("userProfile.title")}</Text>
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -244,6 +387,10 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               <Ionicons name="ellipsis-horizontal" size={18} color={TEXT_LIGHT} />
             </TouchableOpacity>
           </View>
+          <View style={styles.likeBadgeWrap}>
+            <Ionicons name="heart" size={12} color="#6B4423" />
+            <Text style={styles.likeBadgeCount}>{profileLikeCount}</Text>
+          </View>
           {user.profileImage ? (
             <Image source={{ uri: user.profileImage }} style={styles.profileImage} resizeMode="cover" />
           ) : (
@@ -256,19 +403,26 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             style={styles.imageOverlay}
           >
             <View style={styles.overlayContent}>
+              {/* اسم + عمر + أيقونة ذكر/أنثى + علم دولة + اسمها — من الباك اند (أنا وأي مستخدم) */}
               <View style={styles.nameRow}>
-                <Text style={styles.overlayName}>{user.name}</Text>
-                {(user.gender || user.age != null) && (
-                  <View style={[styles.ageBadge, { backgroundColor: genderBg }]}>
-                    <Ionicons
-                      name={user.gender === "female" ? "female" : user.gender === "male" ? "male" : "person"}
-                      size={12}
-                      color={genderColor}
-                    />
-                    <Text style={[styles.ageText, { color: genderColor }]}>
-                      {user.age != null ? String(user.age) : "—"}
+                <Text style={styles.overlayName}>{displayUser.name}</Text>
+                {displayUser.age != null && (
+                  <Text style={[styles.ageText, { color: genderColor }]}>{displayUser.age}</Text>
+                )}
+                {(displayUser.gender === "male" || displayUser.gender === "female") && (
+                  <Ionicons
+                    name={displayUser.gender === "female" ? "female" : "male"}
+                    size={14}
+                    color={genderColor}
+                  />
+                )}
+                {displayUser.country && (
+                  <>
+                    <Text style={styles.flagEmoji}>{getFlagEmoji(displayUser.country)}</Text>
+                    <Text style={styles.flagText} numberOfLines={1}>
+                      {getCountryName(displayUser.country, lang) || displayUser.country}
                     </Text>
-                  </View>
+                  </>
                 )}
               </View>
               <TouchableOpacity style={styles.idRow} onPress={copyId} activeOpacity={0.8}>
@@ -279,32 +433,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
                   color={copied ? "#34d399" : TEXT_MUTED}
                 />
               </TouchableOpacity>
-              {user.country && (
-                <View style={styles.flagRow}>
-                  <Text style={styles.flagEmoji}>{getFlagEmoji(user.country)}</Text>
-                  <Text style={styles.flagText}>{getCountryName(user.country) || user.country}</Text>
-                </View>
-              )}
             </View>
           </LinearGradient>
-        </View>
-
-        {/* ماسة قيمة سحر + ماسة سحر ثروة + ليفل */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statBadge, styles.statPink]}>
-            <Ionicons name="diamond" size={16} color="#f472b6" />
-            <Text style={styles.statLabel}>قيمة سحر</Text>
-            <Text style={styles.statValue}>0</Text>
-          </View>
-          <View style={[styles.statBadge, styles.statBlue]}>
-            <Ionicons name="diamond" size={16} color="#60a5fa" />
-            <Text style={styles.statLabel}>سحر ثروة</Text>
-            <Text style={styles.statValue}>0</Text>
-          </View>
-          <View style={styles.levelBadge}>
-            <Ionicons name="trophy" size={14} color="#fbbf24" />
-            <Text style={styles.levelText}>ليفل</Text>
-          </View>
         </View>
 
         {/* تبويبان: معلومات | لحظة — كتابة صغيرة وجذابة */}
@@ -315,7 +445,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             activeOpacity={0.8}
           >
             <Ionicons name="person-outline" size={14} color={activeTab === "info" ? "#0f172a" : TEXT_MUTED} />
-            <Text style={[styles.tabText, activeTab === "info" && styles.tabTextActive]}>معلومات</Text>
+            <Text style={[styles.tabText, activeTab === "info" && styles.tabTextActive]}>{t("userProfile.info")}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tab, activeTab === "moment" && styles.tabActive]}
@@ -323,17 +453,40 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             activeOpacity={0.8}
           >
             <Ionicons name="sparkles-outline" size={14} color={activeTab === "moment" ? "#0f172a" : TEXT_MUTED} />
-            <Text style={[styles.tabText, activeTab === "moment" && styles.tabTextActive]}>لحظة</Text>
+            <Text style={[styles.tabText, activeTab === "moment" && styles.tabTextActive]}>{t("userProfile.moment")}</Text>
           </TouchableOpacity>
         </View>
 
         {/* المحتوى حسب التبويب */}
         {activeTab === "info" ? (
           <View style={styles.infoContent}>
+            {/* ليفل + قيمة سحر + سحر ثروة — أولاً بجنب بعض */}
+            {!hideWealthMagic && (
+            <View style={[styles.statsInfoCard, CARD_SHADOW]}>
+              <View style={styles.statsInfoRow}>
+                <View style={styles.statsInfoItem}>
+                  <Ionicons name="trophy-outline" size={14} color="#fbbf24" />
+                  <Text style={styles.statsInfoLabel}>{t("userProfile.level")}</Text>
+                  <Text style={styles.statsInfoValue}>0</Text>
+                </View>
+                <View style={styles.statsInfoItem}>
+                  <Ionicons name="diamond-outline" size={14} color="#f472b6" />
+                  <Text style={styles.statsInfoLabel}>{t("userProfile.magicValue")}</Text>
+                  <Text style={styles.statsInfoValue}>0</Text>
+                </View>
+                <View style={styles.statsInfoItem}>
+                  <Ionicons name="diamond-outline" size={14} color="#60a5fa" />
+                  <Text style={styles.statsInfoLabel}>{t("userProfile.wealthMagic")}</Text>
+                  <Text style={styles.statsInfoValue}>0</Text>
+                </View>
+              </View>
+            </View>
+            )}
+
             <View style={[styles.infoCard, CARD_SHADOW]}>
               <View style={styles.infoRow}>
                 <Ionicons name="finger-print-outline" size={18} color={ACCENT_SOFT} />
-                <Text style={styles.infoLabel}>المعرف</Text>
+                <Text style={styles.infoLabel}>{t("userProfile.id")}</Text>
                 <Text style={styles.infoValue} numberOfLines={1}>{user.id}</Text>
                 <TouchableOpacity onPress={copyId} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <Ionicons name={copied ? "checkmark-circle" : "copy-outline"} size={18} color={copied ? "#34d399" : ACCENT_SOFT} />
@@ -344,8 +497,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
                   <View style={styles.infoDivider} />
                   <View style={styles.infoRow}>
                     <Text style={styles.infoFlag}>{getFlagEmoji(user.country)}</Text>
-                    <Text style={styles.infoLabel}>الدولة</Text>
-                    <Text style={styles.infoValue}>{getCountryName(user.country) || user.country}</Text>
+                    <Text style={styles.infoLabel}>{t("userProfile.country")}</Text>
+                    <Text style={styles.infoValue}>{getCountryName(user.country, lang) || user.country}</Text>
                   </View>
                 </>
               )}
@@ -354,9 +507,9 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
                   <View style={styles.infoDivider} />
                   <View style={styles.infoRow}>
                     <Ionicons name={user.gender === "female" ? "female" : "male"} size={18} color={genderColor} />
-                    <Text style={styles.infoLabel}>الجنس والعمر</Text>
+                    <Text style={styles.infoLabel}>{t("userProfile.genderAge")}</Text>
                     <Text style={[styles.infoValue, { color: genderColor }]}>
-                      {[user.gender === "male" ? "ذكر" : user.gender === "female" ? "أنثى" : "", user.age != null ? `${user.age} سنة` : ""].filter(Boolean).join(" · ") || "—"}
+                      {[user.gender === "male" ? t("userProfile.male") : user.gender === "female" ? t("userProfile.female") : "", user.age != null ? `${user.age} ${t("userProfile.years")}` : ""].filter(Boolean).join(" · ") || "—"}
                     </Text>
                   </View>
                 </>
@@ -364,17 +517,17 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               <View style={styles.infoDivider} />
               <View style={styles.infoRow}>
                 <Ionicons name="resize-outline" size={18} color={ACCENT_SOFT} />
-                <Text style={styles.infoLabel}>الطول</Text>
+                <Text style={styles.infoLabel}>{t("userProfile.height")}</Text>
                 <Text style={styles.infoValue}>
-                  {user.height != null && Number(user.height) > 0 ? `${user.height} سم` : "—"}
+                  {user.height != null && Number(user.height) > 0 ? `${user.height} ${t("userProfile.cm")}` : "—"}
                 </Text>
               </View>
               <View style={styles.infoDivider} />
               <View style={styles.infoRow}>
                 <Ionicons name="barbell-outline" size={18} color={ACCENT_SOFT} />
-                <Text style={styles.infoLabel}>الوزن</Text>
+                <Text style={styles.infoLabel}>{t("userProfile.weight")}</Text>
                 <Text style={styles.infoValue}>
-                  {user.weight != null && Number(user.weight) > 0 ? `${user.weight} كغ` : "—"}
+                  {user.weight != null && Number(user.weight) > 0 ? `${user.weight} ${t("userProfile.kg")}` : "—"}
                 </Text>
               </View>
             </View>
@@ -384,7 +537,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               <TouchableOpacity style={styles.quickRow} activeOpacity={0.8}>
                 <View style={styles.quickLeft}>
                   <Ionicons name="car-outline" size={18} color={ACCENT_SOFT} />
-                  <Text style={styles.quickTitle}>اركب</Text>
+                  <Text style={styles.quickTitle}>{t("userProfile.ride")}</Text>
                 </View>
                 <Ionicons name="chevron-back" size={18} color={TEXT_MUTED} />
               </TouchableOpacity>
@@ -392,7 +545,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               <TouchableOpacity style={styles.quickRow} activeOpacity={0.8}>
                 <View style={styles.quickLeft}>
                   <Ionicons name="people-outline" size={18} color={ACCENT_SOFT} />
-                  <Text style={styles.quickTitle}>العيلة</Text>
+                  <Text style={styles.quickTitle}>{t("userProfile.family")}</Text>
                 </View>
                 <Ionicons name="chevron-back" size={18} color={TEXT_MUTED} />
               </TouchableOpacity>
@@ -403,12 +556,12 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               <View style={styles.giftHeaderRow}>
                 <View style={styles.giftTitleRow}>
                   <Ionicons name="gift-outline" size={18} color={GIFT_COLOR} />
-                  <Text style={styles.giftTitle}>جدار الهدايا</Text>
+                  <Text style={styles.giftTitle}>{t("userProfile.giftWall")}</Text>
                 </View>
                 <Ionicons name="chevron-back" size={18} color={TEXT_MUTED} />
               </View>
               <Text style={styles.giftSub}>
-                نظرة سريعة على أجمل الهدايا التي حصل عليها هذا المستخدم.
+                {t("userProfile.giftWallDesc")}
               </Text>
             </View>
           </View>
@@ -417,7 +570,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             {momentsLoading ? (
               <View style={styles.momentLoadingWrap}>
                 <ActivityIndicator size="small" color={ACCENT_SOFT} />
-                <Text style={styles.momentLoadingText}>جاري التحميل...</Text>
+                <Text style={styles.momentLoadingText}>{t("userProfile.loading")}</Text>
               </View>
             ) : momentsError ? (
               <View style={styles.momentErrorWrap}>
@@ -427,8 +580,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             ) : moments.length === 0 ? (
               <View style={styles.momentEmptyWrap}>
                 <Ionicons name="images-outline" size={36} color={TEXT_MUTED} />
-                <Text style={styles.momentEmptyTitle}>لا توجد لحظات</Text>
-                <Text style={styles.momentEmptySub}>لم ينشر هذا المستخدم أي لحظات بعد</Text>
+                <Text style={styles.momentEmptyTitle}>{t("userProfile.noMoments")}</Text>
+                <Text style={styles.momentEmptySub}>{t("userProfile.noMomentsDesc")}</Text>
               </View>
             ) : (
               <View style={styles.momentGrid}>
@@ -448,7 +601,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
                       )}
                     </View>
                     <View style={styles.momentFooter}>
-                      <Text style={styles.momentTime}>{formatRelativeTime(m.createdAt)}</Text>
+                      <Text style={styles.momentTime}>{formatRelativeTime(m.createdAt, lang)}</Text>
                       <TouchableOpacity style={styles.momentLikeBtn} onPress={() => handleLike(m)} activeOpacity={0.7}>
                         <Ionicons name={m.likedByMe ? "heart" : "heart-outline"} size={14} color={m.likedByMe ? "#f472b6" : TEXT_MUTED} />
                         <Text style={styles.momentLikeCount}>{m.likeCount}</Text>
@@ -488,8 +641,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
               }}
             >
               <Ionicons name="ban-outline" size={18} color="#f97373" />
-              <Text style={[styles.moreMenuText, { color: "#f97373" }]}>
-                {isBlocked ? "إلغاء الحظر" : "حظر المستخدم"}
+                  <Text style={[styles.moreMenuText, { color: "#f97373" }]}>
+                {isBlocked ? t("userProfile.unblock") : t("userProfile.blockUser")}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -503,7 +656,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             >
               <Ionicons name="person-remove-outline" size={18} color="#facc15" />
               <Text style={[styles.moreMenuText, { color: "#facc15" }]}>
-                {isFollowed ? "إلغاء المتابعة" : "متابعة"}
+                {isFollowed ? t("userProfile.unfollow") : t("userProfile.follow")}
               </Text>
             </TouchableOpacity>
           </View>
@@ -543,7 +696,22 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
           </View>
         </Pressable>
       </Modal>
-      {/* صف الأيقونات — ثابت في أسفل الصفحة */}
+
+      {/* مودال مبروك — حصلت على 25 ذهب عند إضافة صديق */}
+      <Modal visible={!!bonusModal} transparent animationType="fade">
+        <Pressable style={styles.bonusModalOverlay} onPress={() => setBonusModal(null)}>
+          <View style={styles.bonusModalCard} onStartShouldSetResponder={() => true}>
+            <Text style={styles.bonusModalEmoji}>🎉</Text>
+            <Text style={styles.bonusModalTitle}>{t("userProfile.congrats")}</Text>
+            <Text style={styles.bonusModalText}>{t("userProfile.bonusReceived").replace("{amount}", String(bonusModal?.reward ?? 25))}</Text>
+            <TouchableOpacity style={styles.bonusModalBtn} onPress={() => setBonusModal(null)} activeOpacity={0.8}>
+              <Text style={styles.bonusModalBtnText}>{t("userProfile.ok")}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* صف الأيقونات — هدية، رسالة، إضافة، إعجاب — صغيرة ومرتبة */}
       <View style={styles.actionsRow}>
         {fromAdmirers && (
           <TouchableOpacity
@@ -562,7 +730,7 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             >
               <Ionicons
                 name={acceptedAsFriend ? "checkmark-done" : "person-add"}
-                size={24}
+                size={18}
                 color={acceptedAsFriend ? ADD_COLOR : MESSAGE_COLOR}
               />
             </View>
@@ -571,39 +739,21 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
                 styles.actionLabel,
                 acceptedAsFriend && { color: ADD_COLOR, fontWeight: "700" },
               ]}
+              numberOfLines={1}
             >
-              {acceptedAsFriend ? "صديق" : accepting ? "جاري..." : "قبول طلب"}
+              {acceptedAsFriend ? t("userProfile.friend") : accepting ? t("userProfile.accepting") : t("userProfile.acceptRequest")}
             </Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
-          <View style={[styles.actionIconWrap, { backgroundColor: "rgba(244,114,182,0.2)" }]}>
-            <Ionicons name="heart" size={24} color={HEART_COLOR} />
+        {currentUser?.id !== user.id && (
+        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8} onPress={handleOpenGiftProfile}>
+          <View style={[styles.actionIconWrap, { backgroundColor: "rgba(251,191,36,0.2)" }]}>
+            <Ionicons name="gift-outline" size={18} color={GIFT_COLOR} />
           </View>
-          <Text style={styles.actionLabel}>إعجاب</Text>
+          <Text style={styles.actionLabel} numberOfLines={1}>{t("userProfile.gift")}</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.actionBtn}
-          activeOpacity={0.8}
-          onPress={handleFollowToggle}
-          disabled={!currentUser?.id || currentUser.id === user.id}
-        >
-          <View
-            style={[
-              styles.actionIconWrap,
-              { backgroundColor: isFollowed ? "rgba(52,211,153,0.35)" : "rgba(52,211,153,0.2)" },
-            ]}
-          >
-            <Ionicons
-              name={isFollowed ? "checkmark-circle" : "person-add-outline"}
-              size={24}
-              color={ADD_COLOR}
-            />
-          </View>
-          <Text style={[styles.actionLabel, isFollowed && { color: ADD_COLOR, fontWeight: "700" }]}>
-            {isFollowed ? "تم إضافة" : "متابعة"}
-          </Text>
-        </TouchableOpacity>
+        )}
+        {currentUser?.id !== user.id && (
         <TouchableOpacity
           style={styles.actionBtn}
           activeOpacity={0.8}
@@ -614,17 +764,65 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
           disabled={!currentUser}
         >
           <View style={[styles.actionIconWrap, { backgroundColor: "rgba(96,165,250,0.2)" }]}>
-            <Ionicons name="chatbubble-ellipses" size={24} color={MESSAGE_COLOR} />
+            <Ionicons name="chatbubble-ellipses-outline" size={18} color={MESSAGE_COLOR} />
           </View>
-          <Text style={styles.actionLabel}>رسالة</Text>
+          <Text style={styles.actionLabel} numberOfLines={1}>{t("userProfile.message")}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.8}>
-          <View style={[styles.actionIconWrap, { backgroundColor: "rgba(251,191,36,0.2)" }]}>
-            <Ionicons name="gift" size={24} color={GIFT_COLOR} />
+        )}
+        {currentUser?.id !== user.id && (
+        <TouchableOpacity
+          style={styles.actionBtn}
+          activeOpacity={0.8}
+          onPress={handleFollowToggle}
+          disabled={!currentUser?.id}
+        >
+          <View
+            style={[
+              styles.actionIconWrap,
+              { backgroundColor: isFollowed ? "rgba(52,211,153,0.35)" : "rgba(52,211,153,0.2)" },
+            ]}
+          >
+            <Ionicons
+              name={isFollowed ? "checkmark-circle" : "person-add-outline"}
+              size={18}
+              color={ADD_COLOR}
+            />
           </View>
-          <Text style={styles.actionLabel}>هدية</Text>
+          <Text style={[styles.actionLabel, isFollowed && { color: ADD_COLOR, fontWeight: "700" }]} numberOfLines={1}>
+            {isFollowed ? t("userProfile.added") : t("userProfile.follow")}
+          </Text>
         </TouchableOpacity>
+        )}
+        {currentUser?.id !== user.id && (
+        <TouchableOpacity
+          style={styles.actionBtn}
+          activeOpacity={0.8}
+          onPress={handleLikeProfile}
+        >
+          <View style={[styles.actionIconWrap, { backgroundColor: profileLikedByMe ? "rgba(244,114,182,0.35)" : "rgba(244,114,182,0.2)" }]}>
+            <Ionicons name={profileLikedByMe ? "heart" : "heart-outline"} size={18} color={HEART_COLOR} />
+          </View>
+          <Text style={[styles.actionLabel, profileLikedByMe && { color: HEART_COLOR, fontWeight: "700" }]} numberOfLines={1}>{t("userProfile.like")}</Text>
+        </TouchableOpacity>
+        )}
       </View>
+
+      {likeToast && (
+        <View style={styles.likeToast} pointerEvents="none">
+          <Text style={styles.likeToastText}>{likeToast}</Text>
+        </View>
+      )}
+
+      <GiftModal
+        visible={showGiftModal}
+        onClose={() => setShowGiftModal(false)}
+        goldBalance={goldBalance}
+        chargedGold={chargedGold}
+        freeGold={freeGold}
+        onSend={handleSendGift}
+        onOpenTopup={onOpenTopup}
+        t={t}
+      />
     </View>
   );
 }
@@ -673,6 +871,42 @@ const styles = StyleSheet.create({
     top: 10,
     left: 10,
     zIndex: 5,
+  },
+  likeBadgeWrap: {
+    position: "absolute",
+    bottom: 10,
+    right: 10,
+    zIndex: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(15,23,42,0.75)",
+  },
+  likeBadgeCount: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6B4423",
+  },
+  likeToast: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "45%",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
+  },
+  likeToastText: {
+    fontSize: 11,
+    color: "#f5f3ff",
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    overflow: "hidden",
   },
   moreBtn: {
     width: 32,
@@ -792,6 +1026,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER_SOFT,
     overflow: "hidden",
+  },
+  statsInfoCard: {
+    width: "100%",
+    marginBottom: 12,
+    backgroundColor: CARD_BG,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.25)",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  statsInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  statsInfoItem: {
+    flex: 1,
+    alignItems: "center",
+    flexDirection: "column",
+    gap: 2,
+  },
+  statsInfoLabel: {
+    fontSize: 10,
+    color: TEXT_MUTED,
+  },
+  statsInfoValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: TEXT_LIGHT,
   },
   quickActionsCard: {
     width: "100%",
@@ -1055,32 +1320,80 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    paddingBottom: Platform.OS === "ios" ? 28 : 16,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingBottom: Platform.OS === "ios" ? 22 : 12,
+    marginTop: 10,
     backgroundColor: CARD_BG,
     borderTopWidth: 1,
     borderTopColor: BORDER_SOFT,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     width: "100%",
   },
   actionBtn: {
     alignItems: "center",
     justifyContent: "center",
     flex: 1,
+    paddingHorizontal: 3,
+    marginTop:-1
   },
   actionIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 8,
+    marginBottom: 4,
   },
   actionLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
+
     color: TEXT_MUTED,
+    marginBottom:50,
+  },
+  bonusModalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  bonusModalCard: {
+    width: "78%",
+    maxWidth: 260,
+    backgroundColor: CARD_BG,
+    borderRadius: 16,
+    padding: 18,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.4)",
+    ...CARD_SHADOW,
+  },
+  bonusModalEmoji: {
+    fontSize: 36,
+    marginBottom: 8,
+  },
+  bonusModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: TEXT_LIGHT,
+    marginBottom: 6,
+  },
+  bonusModalText: {
+    fontSize: 14,
+    color: TEXT_MUTED,
+    marginBottom: 14,
+  },
+  bonusModalBtn: {
+    backgroundColor: "#22c55e",
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+  },
+  bonusModalBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
   },
 });

@@ -13,6 +13,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { fetchFollowers, fetchFriends, fetchFollowing, fetchBlocked, type SocialUser, type BlockedUser } from "../../utils/socialApi";
 import { API_BASE_URL } from "../../utils/authHelper";
+import { useLanguage } from "../_contexts/LanguageContext";
+import { useTheme } from "../_contexts/ThemeContext";
 
 function getFullImageUrl(url: string): string {
   if (!url) return "";
@@ -21,12 +23,6 @@ function getFullImageUrl(url: string): string {
   return url.startsWith("/") ? `${base}${url}` : `${base}/uploads/${url.replace(/^\//, "")}`;
 }
 
-const PURPLE_DARK = "#1a1625";
-const ACCENT_SOFT = "#c4b5fd";
-const TEXT_LIGHT = "#f5f3ff";
-const TEXT_MUTED = "#a1a1aa";
-const CARD_BG = "rgba(45, 38, 64, 0.6)";
-const BORDER_SOFT = "rgba(167, 139, 250, 0.2)";
 const FRIEND_GREEN = "#34d399";
 
 type Props = {
@@ -37,19 +33,21 @@ type Props = {
   onAdmirerPress?: (user: SocialUser, isFriend: boolean) => void;
 };
 
-const TITLES = {
-  admirers: "المعجبون",
-  following: "أتابع",
-  friends: "صديق",
-  blocked: "قائمة الحظر",
+const TITLE_KEYS: Record<Props["type"], string> = {
+  admirers: "social.admirers",
+  following: "social.following",
+  friends: "social.friends",
+  blocked: "social.blocked",
 };
 
 export default function SocialListScreen({ type, currentUserId, onBack, onSwitchType, onAdmirerPress }: Props) {
-  const title = TITLES[type];
+  const { t } = useLanguage();
+  const { theme } = useTheme();
+  const title = t(TITLE_KEYS[type]);
   const [followers, setFollowers] = useState<SocialUser[]>([]);
   const [following, setFollowing] = useState<SocialUser[]>([]);
   const [friends, setFriends] = useState<SocialUser[]>([]);
-   const [blocked, setBlocked] = useState<BlockedUser[]>([]);
+  const [blocked, setBlocked] = useState<BlockedUser[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
@@ -77,15 +75,17 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
   }, [loadData]);
 
   const isFriend = (userId: string) => friends.some((f) => f.id === userId);
+  /** المعجبون = فقط من أضافوني (تابعوني)، مع إزالة التكرار إن وجد */
+  const admirersList = followers.filter((f, i, arr) => arr.findIndex((x) => x.id === f.id) === i);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      <View style={[styles.header, { borderBottomColor: theme.border }]}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.8}>
-          <Ionicons name="arrow-forward" size={22} color={ACCENT_SOFT} />
-          <Text style={styles.backText}>رجوع</Text>
+          <Ionicons name="arrow-forward" size={22} color={theme.accentSoft} />
+          <Text style={[styles.backText, { color: theme.accentSoft }]}>{t("back")}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{title}</Text>
+        <Text style={[styles.headerTitle, { color: theme.textLight }]}>{title}</Text>
       </View>
 
       <ScrollView
@@ -93,77 +93,77 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT_SOFT} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.accentSoft} />
         }
       >
-        <View style={styles.statsCard}>
+        <View style={[styles.statsCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
           <View style={styles.statsRow}>
             <TouchableOpacity style={styles.statItem} onPress={() => onSwitchType("friends")} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>{friends.length}</Text>
-              <Text style={styles.statLabel}>صديق</Text>
+              <Text style={[styles.statNumber, { color: theme.textLight }]}>{friends.length}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>{t("social.friends")}</Text>
             </TouchableOpacity>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: theme.border }]} />
             <TouchableOpacity style={styles.statItem} onPress={() => onSwitchType("following")} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>{following.length}</Text>
-              <Text style={styles.statLabel}>أتابع</Text>
+              <Text style={[styles.statNumber, { color: theme.textLight }]}>{following.length}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>{t("social.following")}</Text>
             </TouchableOpacity>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: theme.border }]} />
             <TouchableOpacity style={styles.statItem} onPress={() => onSwitchType("admirers")} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>{followers.length}</Text>
-              <Text style={styles.statLabel}>معجب</Text>
+              <Text style={[styles.statNumber, { color: theme.textLight }]}>{admirersList.length}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>{t("social.admirers")}</Text>
             </TouchableOpacity>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: theme.border }]} />
             <TouchableOpacity style={styles.statItem} onPress={() => onSwitchType("blocked")} activeOpacity={0.7}>
-              <Text style={styles.statNumber}>{blocked.length}</Text>
-              <Text style={styles.statLabel}>محظور</Text>
+              <Text style={[styles.statNumber, { color: theme.textLight }]}>{blocked.length}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>{t("social.blockedLabel")}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {type === "admirers" && followers.length > 0 ? (
+        {type === "admirers" && admirersList.length > 0 ? (
           <View style={styles.followersList}>
-            {followers.map((f) => {
+            {admirersList.map((f) => {
               const friend = isFriend(f.id);
               return (
                 <TouchableOpacity
                   key={f.id}
-                  style={styles.followerCard}
+                  style={[styles.followerCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                   activeOpacity={0.8}
                   onPress={() => onAdmirerPress?.(f, friend)}
                 >
                   {f.profileImage ? (
                     <Image source={{ uri: getFullImageUrl(f.profileImage) }} style={styles.followerAvatar} />
                   ) : (
-                    <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder]}>
-                      <Ionicons name="person" size={24} color={TEXT_MUTED} />
+                    <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
+                      <Ionicons name="person" size={24} color={theme.textMuted} />
                     </View>
                   )}
                   <View style={styles.followerInfo}>
                     <View style={styles.followerNameRow}>
-                      <Text style={styles.followerName}>{f.name}</Text>
+                      <Text style={[styles.followerName, { color: theme.textLight }]}>{f.name}</Text>
                       {friend && (
                         <View style={styles.friendBadge}>
                           <Ionicons name="checkmark-done" size={12} color="#fff" />
-                          <Text style={styles.friendBadgeText}>صديق</Text>
+                          <Text style={styles.friendBadgeText}>{t("social.friends")}</Text>
                         </View>
                       )}
                     </View>
-                    <Text style={styles.followerId}>{f.id}</Text>
+                    <Text style={[styles.followerId, { color: theme.textMuted }]}>{f.id}</Text>
                     <View style={styles.followerMeta}>
                       {f.country && (
                         <View style={styles.followerBadge}>
                           <Text style={styles.followerFlag}>{getFlagEmoji(f.country)}</Text>
-                          <Text style={styles.followerMetaText}>{getCountryName(f.country) || f.country}</Text>
+                          <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{getCountryName(f.country) || f.country}</Text>
                         </View>
                       )}
                       {f.age != null && f.age > 0 && (
                         <View style={styles.followerBadge}>
-                          <Text style={styles.followerMetaText}>{f.age} سنة</Text>
+                          <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{f.age} سنة</Text>
                         </View>
                       )}
                     </View>
                   </View>
-                  <Ionicons name="chevron-back" size={20} color={TEXT_MUTED} />
+                  <Ionicons name="chevron-back" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
               );
             })}
@@ -175,43 +175,43 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
               return (
                 <TouchableOpacity
                   key={f.id}
-                  style={styles.followerCard}
+                  style={[styles.followerCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                   activeOpacity={0.8}
                   onPress={() => onAdmirerPress?.(f, friend)}
                 >
                   {f.profileImage ? (
                     <Image source={{ uri: getFullImageUrl(f.profileImage) }} style={styles.followerAvatar} />
                   ) : (
-                    <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder]}>
-                      <Ionicons name="person" size={24} color={TEXT_MUTED} />
+                    <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
+                      <Ionicons name="person" size={24} color={theme.textMuted} />
                     </View>
                   )}
                   <View style={styles.followerInfo}>
                     <View style={styles.followerNameRow}>
-                      <Text style={styles.followerName}>{f.name}</Text>
+                      <Text style={[styles.followerName, { color: theme.textLight }]}>{f.name}</Text>
                       {friend && (
                         <View style={styles.friendBadge}>
                           <Ionicons name="checkmark-done" size={12} color="#fff" />
-                          <Text style={styles.friendBadgeText}>صديق</Text>
+                          <Text style={styles.friendBadgeText}>{t("social.friends")}</Text>
                         </View>
                       )}
                     </View>
-                    <Text style={styles.followerId}>{f.id}</Text>
+                    <Text style={[styles.followerId, { color: theme.textMuted }]}>{f.id}</Text>
                     <View style={styles.followerMeta}>
                       {f.country && (
                         <View style={styles.followerBadge}>
                           <Text style={styles.followerFlag}>{getFlagEmoji(f.country)}</Text>
-                          <Text style={styles.followerMetaText}>{getCountryName(f.country) || f.country}</Text>
+                          <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{getCountryName(f.country) || f.country}</Text>
                         </View>
                       )}
                       {f.age != null && f.age > 0 && (
                         <View style={styles.followerBadge}>
-                          <Text style={styles.followerMetaText}>{f.age} سنة</Text>
+                          <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{f.age} سنة</Text>
                         </View>
                       )}
                     </View>
                   </View>
-                  <Ionicons name="chevron-back" size={20} color={TEXT_MUTED} />
+                  <Ionicons name="chevron-back" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
               );
             })}
@@ -221,36 +221,36 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
             {friends.map((f) => (
               <TouchableOpacity
                 key={f.id}
-                style={styles.followerCard}
+                style={[styles.followerCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                 activeOpacity={0.8}
                 onPress={() => onAdmirerPress?.(f, true)}
               >
                 {f.profileImage ? (
                   <Image source={{ uri: getFullImageUrl(f.profileImage) }} style={styles.followerAvatar} />
                 ) : (
-                  <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder]}>
-                    <Ionicons name="person" size={24} color={TEXT_MUTED} />
+                  <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
+                    <Ionicons name="person" size={24} color={theme.textMuted} />
                   </View>
                 )}
                 <View style={styles.followerInfo}>
                   <View style={styles.followerNameRow}>
-                    <Text style={styles.followerName}>{f.name}</Text>
+                    <Text style={[styles.followerName, { color: theme.textLight }]}>{f.name}</Text>
                     <View style={styles.friendBadge}>
                       <Ionicons name="checkmark-done" size={12} color="#fff" />
-                      <Text style={styles.friendBadgeText}>صديق</Text>
+                      <Text style={styles.friendBadgeText}>{t("social.friends")}</Text>
                     </View>
                   </View>
-                  <Text style={styles.followerId}>{f.id}</Text>
+                  <Text style={[styles.followerId, { color: theme.textMuted }]}>{f.id}</Text>
                   <View style={styles.followerMeta}>
                     {f.country && (
                       <View style={styles.followerBadge}>
                         <Text style={styles.followerFlag}>{getFlagEmoji(f.country)}</Text>
-                        <Text style={styles.followerMetaText}>{getCountryName(f.country) || f.country}</Text>
+                        <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{getCountryName(f.country) || f.country}</Text>
                       </View>
                     )}
                     {f.age != null && f.age > 0 && (
                       <View style={styles.followerBadge}>
-                        <Text style={styles.followerMetaText}>{f.age} سنة</Text>
+                        <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{f.age} سنة</Text>
                       </View>
                     )}
                   </View>
@@ -263,58 +263,59 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
             {blocked.map((b) => (
               <TouchableOpacity
                 key={b.id}
-                style={styles.followerCard}
+                style={[styles.followerCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
                 activeOpacity={0.8}
                 onPress={() => onAdmirerPress?.(b, isFriend(b.id))}
               >
                 {b.profileImage ? (
                   <Image source={{ uri: getFullImageUrl(b.profileImage) }} style={styles.followerAvatar} />
                 ) : (
-                  <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder]}>
-                    <Ionicons name="person" size={24} color={TEXT_MUTED} />
+                  <View style={[styles.followerAvatar, styles.followerAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
+                    <Ionicons name="person" size={24} color={theme.textMuted} />
                   </View>
                 )}
                 <View style={styles.followerInfo}>
                   <View style={styles.followerNameRow}>
-                    <Text style={styles.followerName}>{b.name}</Text>
+                    <Text style={[styles.followerName, { color: theme.textLight }]}>{b.name}</Text>
                     <View style={styles.friendBadge}>
                       <Ionicons name="ban-outline" size={12} color="#fff" />
                       <Text style={styles.friendBadgeText}>
                         {b.relation === "blocked"
-                          ? "محظور"
+                          ? t("social.blockedLabel")
                           : b.relation === "blocked_me"
-                          ? "قام بحظرك"
-                          : "محظور متبادل"}
+                          ? t("social.blockedYou")
+                          : t("social.mutuallyBlocked")}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.followerId}>{b.id}</Text>
+                  <Text style={[styles.followerId, { color: theme.textMuted }]}>{b.id}</Text>
                   <View style={styles.followerMeta}>
                     {b.country && (
                       <View style={styles.followerBadge}>
                         <Text style={styles.followerFlag}>{getFlagEmoji(b.country)}</Text>
-                        <Text style={styles.followerMetaText}>{getCountryName(b.country) || b.country}</Text>
+                        <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{getCountryName(b.country) || b.country}</Text>
                       </View>
                     )}
                     {b.age != null && b.age > 0 && (
                       <View style={styles.followerBadge}>
-                        <Text style={styles.followerMetaText}>{b.age} سنة</Text>
+                        <Text style={[styles.followerMetaText, { color: theme.textMuted }]}>{b.age} {t("social.years")}</Text>
                       </View>
                     )}
                   </View>
                 </View>
-                <Ionicons name="chevron-back" size={20} color={TEXT_MUTED} />
+                <Ionicons name="chevron-back" size={20} color={theme.textMuted} />
               </TouchableOpacity>
             ))}
           </View>
         ) : (
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>👋</Text>
-            <Text style={styles.emptyTitle}>لا يوجد أحد بعد</Text>
-            <Text style={styles.emptySub}>
-              {type === "admirers" && "لم يتابعك أحد بعد"}
-              {type === "following" && "لم تتابع أحداً بعد"}
-              {type === "friends" && "لم تضف أصدقاء بعد"}
+            <Text style={[styles.emptyTitle, { color: theme.textLight }]}>{t("social.emptyTitle")}</Text>
+            <Text style={[styles.emptySub, { color: theme.textMuted }]}>
+              {type === "admirers" && t("social.emptyAdmirers")}
+              {type === "following" && t("social.emptyFollowing")}
+              {type === "friends" && t("social.emptyFriends")}
+              {type === "blocked" && t("social.emptyBlocked")}
             </Text>
           </View>
         )}
@@ -324,14 +325,13 @@ export default function SocialListScreen({ type, currentUserId, onBack, onSwitch
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: PURPLE_DARK, paddingTop: Platform.OS === "ios" ? 40 : 20 },
+  container: { flex: 1, paddingTop: Platform.OS === "ios" ? 40 : 20 },
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(167, 139, 250, 0.12)",
   },
   backBtn: {
     flexDirection: "row",
@@ -339,17 +339,15 @@ const styles = StyleSheet.create({
     gap: 6,
    marginRight: 12,
   },
-  backText: { fontSize: 15, fontWeight: "600", color: ACCENT_SOFT },
-  headerTitle: { fontSize: 18, fontWeight: "700", color: TEXT_LIGHT, flex: 1, textAlign: "center" },
+  backText: { fontSize: 15, fontWeight: "600" },
+  headerTitle: { fontSize: 18, fontWeight: "700", flex: 1, textAlign: "center" },
   scroll: { flex: 1 },
   content: { padding: 20, flex: 1, gap: 20 },
   statsCard: {
-    backgroundColor: "rgba(45, 38, 64, 0.6)",
     borderRadius: 20,
     paddingVertical: 16,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: "rgba(167, 139, 250, 0.12)",
   },
   statsRow: {
     flexDirection: "row",
@@ -360,17 +358,14 @@ const styles = StyleSheet.create({
   statDivider: {
     width: 1,
     height: 24,
-    backgroundColor: "rgba(167, 139, 250, 0.2)",
     borderRadius: 1,
   },
   statNumber: {
     fontSize: 18,
     fontWeight: "800",
-    color: TEXT_LIGHT,
   },
   statLabel: {
     fontSize: 12,
-    color: TEXT_MUTED,
     marginTop: 4,
   },
   emptyState: {
@@ -380,8 +375,8 @@ const styles = StyleSheet.create({
     paddingVertical: 60,
   },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 18, fontWeight: "700", color: TEXT_LIGHT, marginBottom: 8 },
-  emptySub: { fontSize: 14, color: TEXT_MUTED },
+  emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  emptySub: { fontSize: 14 },
   followersList: {
     marginTop: 16,
     gap: 12,
@@ -389,11 +384,9 @@ const styles = StyleSheet.create({
   followerCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: CARD_BG,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: BORDER_SOFT,
     gap: 14,
   },
   followerAvatar: {
@@ -402,7 +395,6 @@ const styles = StyleSheet.create({
     borderRadius: 26,
   },
   followerAvatarPlaceholder: {
-    backgroundColor: "rgba(167, 139, 250, 0.2)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -415,7 +407,6 @@ const styles = StyleSheet.create({
   followerName: {
     fontSize: 16,
     fontWeight: "700",
-    color: TEXT_LIGHT,
   },
   friendBadge: {
     flexDirection: "row",
@@ -433,7 +424,6 @@ const styles = StyleSheet.create({
   },
   followerId: {
     fontSize: 12,
-    color: TEXT_MUTED,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   followerMeta: {
@@ -449,6 +439,5 @@ const styles = StyleSheet.create({
   followerFlag: { fontSize: 14 },
   followerMetaText: {
     fontSize: 12,
-    color: TEXT_MUTED,
   },
 });

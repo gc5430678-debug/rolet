@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import axios from "axios";
-import { API_BASE_URL } from "../../utils/authHelper";
+import { API_BASE_URL } from "../utils/authHelper";
 
 type AlertButtonStyle = "default" | "cancel" | "destructive";
 
@@ -92,7 +92,6 @@ export function AppAlertProvider({ children }: { children: React.ReactNode }) {
     };
   }, [visible, options?.autoHideMs]);
 
-  // تنبيه انقطاع الباك اند — يظهر كل 2 ثانية كتوسيت خفيف
   useEffect(() => {
     let cancelled = false;
     const interval = setInterval(async () => {
@@ -287,4 +286,3 @@ const styles = StyleSheet.create({
     color: "#fecaca",
   },
 });
-

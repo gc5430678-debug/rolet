@@ -15,13 +15,16 @@ import {
   Pressable,
   AppState,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { useFonts } from "expo-font";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import LottieView from "lottie-react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import * as ImagePicker from "expo-image-picker";
 import * as Localization from "expo-localization";
 import { checkAuthStatus, API_BASE_URL } from "../utils/authHelper";
+import { leaveGroupChat } from "../utils/messagesApi";
+import { registerPushTokenWithBackend, notifyFriendsOnline, notifyOffline } from "../utils/pushNotifications";
 import { getFlagEmoji, getCountryName } from "../utils/countries";
 import type { UserSearchResult } from "../utils/usersApi";
 import type { SocialUser } from "../utils/socialApi";
@@ -32,11 +35,24 @@ import MessagesScreen from "./screens/MessagesScreen";
 import ChatScreen from "./screens/ChatScreen";
 import ClubScreen from "./screens/ClubScreen";
 import MomentScreen from "./screens/MomentScreen";
-import { AppAlertProvider } from "./components/AppAlertProvider";
+import { AppAlertProvider } from "../components/AppAlertProvider";
 import TopupScreen from "./screens/TopupScreen";
+import RevenuesScreen from "./screens/RevenuesScreen";
+import TaskCenterScreen from "./screens/TaskCenterScreen";
+import DecorationsScreen from "./screens/DecorationsScreen";
+import SettingsScreen from "./screens/SettingsScreen";
+import PrivilegesScreen from "./screens/PrivilegesScreen";
 import SocialListScreen from "./screens/SocialListScreen";
+import VisitorsScreen from "./screens/VisitorsScreen";
+import GroupChatScreen from "./screens/GroupChatScreen";
+import GroupChatMiniFloating from "../components/GroupChatMiniFloating";
+import { CheckInContinuousModal } from "../components/CheckInContinuousModal";
 import SearchScreen from "./screens/SearchScreen";
 import UserProfileScreen from "./screens/UserProfileScreen";
+import { LanguageProvider, useLanguage } from "./_contexts/LanguageContext";
+import { ThemeProvider, useTheme } from "./_contexts/ThemeContext";
+import { PrivilegesProvider } from "./_contexts/PrivilegesContext";
+import { OfflineBanner } from "../components/OfflineBanner";
 
 const { width } = Dimensions.get("window");
 
@@ -109,6 +125,7 @@ function ProfileScreen({
   onUserUpdate: (u: User) => void;
   onBack?: () => void;
 }) {
+  const { t, lang } = useLanguage();
   const deviceCountry = getDeviceCountryCode();
   const countryCode = user.country || deviceCountry || "";
   const isLocked =
@@ -158,7 +175,7 @@ function ProfileScreen({
   const pickImage = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      setError("يجب السماح بالوصول للصور");
+      setError(t("profile.allowPhotos"));
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -173,7 +190,7 @@ function ProfileScreen({
       const b64 = result.assets[0].base64;
       setProfileImage(b64 ? `data:image/jpeg;base64,${b64}` : uri);
     }
-  }, []);
+  }, [t]);
 
   const saveProfile = useCallback(async () => {
     setError("");
@@ -181,7 +198,7 @@ function ProfileScreen({
     try {
       const token = await AsyncStorage.getItem("token");
       if (!token) {
-        setError("انتهت الجلسة");
+        setError(t("profile.sessionExpired"));
         setSaving(false);
         return;
       }
@@ -204,13 +221,16 @@ function ProfileScreen({
         timeout: 12000,
       });
       if (res.data?.success && res.data?.user) {
-        onUserUpdate(res.data.user);
+        const savedName = name.trim() || user.name;
+        const updatedUser = { ...user, ...res.data.user, name: res.data.user.name ?? savedName };
+        onUserUpdate(updatedUser);
+        if (onBack) onBack();
       }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         (err as Error)?.message ||
-        "فشل الحفظ";
+        t("profile.saveFailed");
       setError(msg);
     } finally {
       setSaving(false);
@@ -230,6 +250,8 @@ function ProfileScreen({
     isLocked,
     user,
     onUserUpdate,
+    onBack,
+    t,
   ]);
 
   return (
@@ -245,10 +267,10 @@ function ProfileScreen({
             {onBack ? (
               <TouchableOpacity onPress={onBack} style={styles.backToTabsBtn} activeOpacity={0.8}>
                 <Ionicons name="arrow-forward" size={22} color={ACCENT_SOFT} />
-                <Text style={styles.backToTabsText}>رجوع</Text>
+                <Text style={styles.backToTabsText}>{t("profile.back")}</Text>
               </TouchableOpacity>
             ) : null}
-            <Text style={styles.profileTitle}>الملف الشخصي</Text>
+            <Text style={styles.profileTitle}>{t("profile.title")}</Text>
           </View>
 
           {/* اسم + صورة + دولة وعلم */}
@@ -267,13 +289,13 @@ function ProfileScreen({
                 style={styles.inputName}
                 value={name}
                 onChangeText={setName}
-                placeholder="الاسم"
+                placeholder={t("profile.namePlaceholder")}
                 placeholderTextColor={TEXT_MUTED}
               />
               <View style={styles.countryRow}>
                 <Text style={styles.flagText}>{getFlagEmoji(countryCode)}</Text>
                 <Text style={styles.countryName} numberOfLines={1}>
-                  {getCountryName(countryCode) || "حسب موقع جهازك"}
+                  {getCountryName(countryCode, lang) || t("profile.countryByDevice")}
                 </Text>
               </View>
             </View>
@@ -281,33 +303,33 @@ function ProfileScreen({
 
           {!isLocked && (
             <>
-              <Text style={styles.label}>الطول (سم)</Text>
+              <Text style={styles.label}>{t("profile.height")}</Text>
               <TextInput
                 style={styles.input}
                 value={height}
                 onChangeText={setHeight}
-                placeholder="مثال: 170"
+                placeholder={t("profile.heightPlaceholder")}
                 placeholderTextColor={TEXT_MUTED}
                 keyboardType="number-pad"
               />
-              <Text style={styles.label}>الوزن (كغ)</Text>
+              <Text style={styles.label}>{t("profile.weight")}</Text>
               <TextInput
                 style={styles.input}
                 value={weight}
                 onChangeText={setWeight}
-                placeholder="مثال: 70"
+                placeholder={t("profile.weightPlaceholder")}
                 placeholderTextColor={TEXT_MUTED}
                 keyboardType="number-pad"
               />
-              <Text style={styles.label}>الهوايات (مثل كيم وغيرها)</Text>
+              <Text style={styles.label}>{t("profile.hobby")}</Text>
               <TextInput
                 style={styles.input}
                 value={hobby}
                 onChangeText={setHobby}
-                placeholder="أدخل هواياتك"
+                placeholder={t("profile.hobbyPlaceholder")}
                 placeholderTextColor={TEXT_MUTED}
               />
-              <Text style={styles.label}>شهر وسنة الميلاد</Text>
+              <Text style={styles.label}>{t("profile.birthMonthYear")}</Text>
               <View style={styles.rowMonthYear}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerScroll}>
                   {MONTHS.map((m, i) => (
@@ -336,30 +358,30 @@ function ProfileScreen({
                   ))}
                 </ScrollView>
               </View>
-              <Text style={styles.label}>العمر (يُحسب تلقائياً): {computedAge}</Text>
+              <Text style={styles.label}>{t("profile.ageAuto")}: {computedAge}</Text>
 
-              <Text style={styles.label}>الجنس</Text>
+              <Text style={styles.label}>{t("profile.gender")}</Text>
               <View style={styles.genderRow}>
                 <TouchableOpacity
                   style={[styles.genderBtn, gender === "male" && styles.genderBtnActive]}
                   onPress={() => setGender("male")}
                 >
                   <Text style={styles.genderIcon}>♂</Text>
-                  <Text style={[styles.genderLabel, gender === "male" && styles.genderLabelActive]}>ذكر</Text>
+                  <Text style={[styles.genderLabel, gender === "male" && styles.genderLabelActive]}>{t("profile.male")}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.genderBtn, gender === "female" && styles.genderBtnActive]}
                   onPress={() => setGender("female")}
                 >
                   <Text style={styles.genderIcon}>♀</Text>
-                  <Text style={[styles.genderLabel, gender === "female" && styles.genderLabelActive]}>أنثى</Text>
+                  <Text style={[styles.genderLabel, gender === "female" && styles.genderLabelActive]}>{t("profile.female")}</Text>
                 </TouchableOpacity>
               </View>
             </>
           )}
 
           {isLocked && (
-            <Text style={styles.lockedHint}>يمكنك تعديل الاسم والصورة فقط.</Text>
+            <Text style={styles.lockedHint}>{t("profile.lockedHint")}</Text>
           )}
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -373,7 +395,7 @@ function ProfileScreen({
             {saving ? (
               <ActivityIndicator color={PURPLE_DARK} />
             ) : (
-              <Text style={styles.primaryBtnText}>{isLocked ? "حفظ التعديلات" : "حفظ البيانات"}</Text>
+              <Text style={styles.primaryBtnText}>{isLocked ? t("profile.saveEdits") : t("profile.saveData")}</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -419,13 +441,12 @@ const TAB_THEMES: Record<TabId, { bg: string; color: string; border: string; sha
   },
 };
 
-const TABS: { id: TabId; label: string; emoji: string }[] = [
-  
-  { id: "home", label: "الرئيسية", emoji: "🏠" },
-  { id: "moment", label: "لحظة", emoji: "✨" },
-  { id: "club", label: "نادي", emoji: "🎯" },
-   { id: "messages", label: "رسائل", emoji: "💬" },
-  { id: "me", label: "أنا", emoji: "😊" },
+const TABS: { id: TabId; labelKey: string; emoji: string }[] = [
+  { id: "home", labelKey: "tabs.home", emoji: "🏠" },
+  { id: "moment", labelKey: "tabs.moment", emoji: "✨" },
+  { id: "club", labelKey: "tabs.club", emoji: "🎯" },
+  { id: "messages", labelKey: "tabs.messages", emoji: "💬" },
+  { id: "me", labelKey: "tabs.me", emoji: "😊" },
 ];
 
 function TabIcon({
@@ -437,6 +458,7 @@ function TabIcon({
   active: boolean;
   onPress: () => void;
 }) {
+  const { t } = useLanguage();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
   const theme = TAB_THEMES[tab.id];
@@ -510,7 +532,7 @@ function TabIcon({
             active && { color: theme.color, fontWeight: "800" },
           ]}
         >
-          {tab.label}
+          {t(tab.labelKey)}
         </Text>
         {active && <View style={[styles.tabDot, { backgroundColor: theme.color }]} />}
       </Animated.View>
@@ -523,28 +545,62 @@ function MainTabsScreen({
   onEditProfile,
   onOpenInfoPage,
   onOpenTopup,
+  onOpenRevenues,
+  onOpenTaskCenter,
+  onOpenDecorations,
+  onOpenSettings,
   onOpenAdmirers,
+  onOpenVisitors,
+  onOpenProfileLikers,
   onOpenFollowing,
   onOpenFriends,
   onOpenSearch,
-  onLogout,
   onOpenChat,
+  onOpenGroupChat,
+  onOpenMyProfile,
+  onWalletUpdate,
+  initialTab,
+  onTabRestored,
+  onMessagesTabActive,
 }: {
   user: NonNullable<User>;
   onEditProfile: () => void;
   onOpenInfoPage: () => void;
   onOpenTopup: () => void;
+  onOpenRevenues: () => void;
+  onOpenTaskCenter: () => void;
+  onOpenDecorations: () => void;
+  onOpenSettings: () => void;
   onOpenAdmirers: () => void;
+  onOpenVisitors: () => void;
+  onOpenProfileLikers?: () => void;
   onOpenFollowing: () => void;
   onOpenFriends: () => void;
   onOpenSearch: () => void;
-  onLogout: () => void;
   onOpenChat: (user: UserSearchResult) => void;
+  onOpenGroupChat?: () => void;
+  onOpenMyProfile?: () => void;
+  onWalletUpdate?: () => void;
+  initialTab?: TabId | null;
+  onTabRestored?: () => void;
+  onMessagesTabActive?: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<TabId>("home");
+  const { theme } = useTheme();
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? "home");
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+      onTabRestored?.();
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (activeTab === "messages") onMessagesTabActive?.();
+  }, [activeTab, onMessagesTabActive]);
 
   return (
-    <View style={styles.tabsContainer}>
+    <View style={[styles.tabsContainer, { backgroundColor: theme.bg }]}>
       <View style={styles.tabsContent}>
         {activeTab === "home" && (
           <HomeScreen
@@ -557,17 +613,25 @@ function MainTabsScreen({
           <MeScreen
             user={user}
             onEditProfile={onEditProfile}
+            onOpenMyProfile={onOpenMyProfile}
             onOpenInfoPage={onOpenInfoPage}
             onOpenTopup={onOpenTopup}
+            onOpenRevenues={onOpenRevenues}
+            onOpenTaskCenter={onOpenTaskCenter}
+            onOpenDecorations={onOpenDecorations}
+            onOpenSettings={onOpenSettings}
             onOpenAdmirers={onOpenAdmirers}
+            onOpenVisitors={onOpenVisitors}
+            onOpenProfileLikers={onOpenProfileLikers}
             onOpenFollowing={onOpenFollowing}
             onOpenFriends={onOpenFriends}
-            onLogout={onLogout}
           />
         )}
-        {activeTab === "messages" && <MessagesScreen onOpenChat={onOpenChat} />}
+        {activeTab === "messages" && (
+          <MessagesScreen onOpenChat={onOpenChat} onOpenGroupChat={onOpenGroupChat} />
+        )}
         {activeTab === "club" && <ClubScreen />}
-        {activeTab === "moment" && <MomentScreen user={user} />}
+        {activeTab === "moment" && <MomentScreen user={user} onWalletUpdate={onWalletUpdate} />}
       </View>
       <View style={styles.tabBar}>
         {TABS.map((tab) => (
@@ -584,6 +648,7 @@ function MainTabsScreen({
 }
 
 export default function Page() {
+  const [fontsLoaded, fontError] = useFonts({ ...Ionicons.font });
   const [authState, setAuthState] = useState<AuthState>("splash");
   const [email, setEmail] = useState("");
   const [pin, setPin] = useState(["", "", "", "", "", ""]);
@@ -597,11 +662,51 @@ export default function Page() {
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showInfoPage, setShowInfoPage] = useState(false);
   const [showTopupPage, setShowTopupPage] = useState(false);
+  const [showRevenuesPage, setShowRevenuesPage] = useState(false);
+  const [showTaskCenterPage, setShowTaskCenterPage] = useState(false);
+  const [showDecorationsPage, setShowDecorationsPage] = useState(false);
+  const [showGroupChatPage, setShowGroupChatPage] = useState(false);
+  const [showGroupChatMini, setShowGroupChatMini] = useState(false);
+  const [userDismissedGroupChatMini, setUserDismissedGroupChatMini] = useState(false);
+  const [groupChatSelectedSlot, setGroupChatSelectedSlot] = useState<string | null>(null);
+  const [showSettingsPage, setShowSettingsPage] = useState(false);
+  const [showPrivilegesPage, setShowPrivilegesPage] = useState(false);
+  const [tabToReturnTo, setTabToReturnTo] = useState<TabId | null>(null);
   const [socialListType, setSocialListType] = useState<"admirers" | "following" | "friends" | "blocked" | null>(null);
+  const [visitorsPageMode, setVisitorsPageMode] = useState<"visitors" | "profileLikers" | null>(null);
   const [selectedAdmirer, setSelectedAdmirer] = useState<{ user: SocialUser; isFriend: boolean } | null>(null);
   const [showSearchPage, setShowSearchPage] = useState(false);
   const [selectedSearchUser, setSelectedSearchUser] = useState<UserSearchResult | null>(null);
   const [selectedChatUser, setSelectedChatUser] = useState<UserSearchResult | null>(null);
+  const [profileFromChatUser, setProfileFromChatUser] = useState<UserSearchResult | null>(null);
+  const [showMyProfilePage, setShowMyProfilePage] = useState(false);
+
+  const openTaskCenter = useCallback(() => {
+    setSelectedChatUser(null);
+    setSelectedAdmirer(null);
+    setSocialListType(null);
+    setVisitorsPageMode(null);
+    setSelectedSearchUser(null);
+    setShowProfileEdit(false);
+    setShowInfoPage(false);
+    setShowTopupPage(false);
+    setShowRevenuesPage(false);
+    setShowSearchPage(false);
+    setShowDecorationsPage(false);
+    setShowGroupChatPage(false);
+    setShowGroupChatMini(false);
+    setGroupChatSelectedSlot(null);
+    setShowSettingsPage(false);
+    setShowPrivilegesPage(false);
+    setShowMyProfilePage(false);
+    setTabToReturnTo("me");
+    setShowTaskCenterPage(true);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const r = await checkAuthStatus();
+    if (r.authenticated && r.user) setUser(r.user as User);
+  }, []);
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const pinRefs = useRef<(TextInput | null)[]>([]);
@@ -649,7 +754,15 @@ export default function Page() {
     return () => { cancelled = true; };
   }, [authState]);
 
-  // ——— إعادة التحقق عند العودة للتطبيق أو بشكل دوري: إذا حُذف المستخدم من الداتابيس يُعاد لتسجيل الدخول ———
+  // ——— تسجيل رمز الإشعارات + إشعار الأصدقاء بالاتصال عند فتح التطبيق ———
+  useEffect(() => {
+    if (authState === "main" && user) {
+      registerPushTokenWithBackend();
+      notifyFriendsOnline();
+    }
+  }, [authState, user?.id]);
+
+  // ——— إعادة التحقق + إشعار الأصدقاء عند العودة للتطبيق + نبض اتصال ———
   useEffect(() => {
     if (authState !== "main" || !user) return;
 
@@ -664,15 +777,33 @@ export default function Page() {
       });
     };
 
+    let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") verifySession();
+      if (state === "active") {
+        verifySession();
+        notifyFriendsOnline();
+        // نبض كل 2 ثانية — النقطة تختفي فوراً عند الإغلاق
+        heartbeatInterval = setInterval(notifyFriendsOnline, 2000);
+      } else {
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+        notifyOffline();
+      }
     });
+
+    if (AppState.currentState === "active") {
+      heartbeatInterval = setInterval(notifyFriendsOnline, 2000);
+    }
 
     const interval = setInterval(verifySession, 45000);
 
     return () => {
       sub.remove();
       clearInterval(interval);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
     };
   }, [authState, user]);
 
@@ -873,10 +1004,24 @@ export default function Page() {
     }
   }, [email, pinFromSignup]);
 
+  // ——— انتظار تحميل الخطوط (Ionicons) قبل عرض أي واجهة ———
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View style={{ flex: 1 }}>
+        <OfflineBanner />
+        <View style={{ flex: 1, backgroundColor: "#1a1625" }} />
+      </View>
+    );
+  }
+
   // ——— شاشة البداية (Splash) ———
   if (authState === "splash") {
     return (
-      <AppAlertProvider>
+      <View style={{ flex: 1 }}>
+        <OfflineBanner />
+        <ThemeProvider>
+        <LanguageProvider>
+        <AppAlertProvider>
         <Animated.View style={[styles.splashContainer, { opacity: fadeAnim }]}>
           <View style={styles.splashContent}>
             <LottieView
@@ -888,49 +1033,258 @@ export default function Page() {
           </View>
         </Animated.View>
       </AppAlertProvider>
+      </LanguageProvider>
+      </ThemeProvider>
+      </View>
     );
   }
 
   // ——— الشاشة الرئيسية: تبويبات (أنا، رسائل، نادي، لحظة) أو صفحة الملف إذا غير مكتمل ———
   if (authState === "main" && user) {
     if (selectedChatUser) {
+      const meAsProfile: UserSearchResult = {
+        id: user.id,
+        name: user.name,
+        profileImage: user.profileImage || "",
+        age: user.age ?? null,
+        country: user.country || "",
+        gender: user.gender || "",
+      };
+      if (profileFromChatUser) {
+        return (
+          <View style={{ flex: 1 }}>
+            <OfflineBanner />
+            <ThemeProvider>
+            <LanguageProvider>
+            <PrivilegesProvider>
+            <>
+            <AppAlertProvider>
+              <UserProfileScreen
+                user={profileFromChatUser}
+                currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
+                onBack={() => setProfileFromChatUser(null)}
+                onOpenChat={() => setProfileFromChatUser(null)}
+                onWalletUpdate={refreshUser}
+                onOpenTopup={() => { setProfileFromChatUser(null); setTabToReturnTo("messages"); setShowTopupPage(true); }}
+              />
+            </AppAlertProvider>
+            <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+          </>
+          </PrivilegesProvider>
+          </LanguageProvider>
+        </ThemeProvider>
+          </View>
+        );
+      }
       return (
-        <AppAlertProvider>
-          <ChatScreen
-            me={{ id: user.id, name: user.name, profileImage: user.profileImage }}
-            other={selectedChatUser}
-            onBack={() => setSelectedChatUser(null)}
-          />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <ChatScreen
+              me={{ id: user.id, name: user.name, profileImage: user.profileImage }}
+              other={selectedChatUser}
+              onBack={() => setSelectedChatUser(null)}
+              onOpenMyProfile={() => setProfileFromChatUser(meAsProfile)}
+              onOpenOtherProfile={() => setProfileFromChatUser(selectedChatUser)}
+              onOpenTopup={() => {
+                setTabToReturnTo("messages");
+                setSelectedChatUser(null);
+                setShowTopupPage(true);
+              }}
+              onWalletUpdate={refreshUser}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
     const profileComplete = isProfileComplete(user);
     if (showProfileEdit || !profileComplete) {
       return (
-        <AppAlertProvider>
-          <ProfileScreen
-            user={user}
-            onUserUpdate={setUser}
-            onBack={profileComplete ? () => setShowProfileEdit(false) : undefined}
-          />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <ProfileScreen
+              user={user}
+              onUserUpdate={setUser}
+              onBack={profileComplete ? () => setShowProfileEdit(false) : undefined}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
     if (showInfoPage) {
       return (
-        <AppAlertProvider>
-          <InfoScreen user={user} onBack={() => setShowInfoPage(false)} />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <InfoScreen user={user} onBack={() => setShowInfoPage(false)} />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
+      );
+    }
+    if (showMyProfilePage) {
+      const meAsProfile: UserSearchResult = {
+        id: user.id,
+        name: user.name,
+        profileImage: user.profileImage || "",
+        age: user.age ?? null,
+        country: user.country || "",
+        gender: user.gender || "",
+      };
+      return (
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <PrivilegesProvider>
+        <>
+          <AppAlertProvider>
+            <UserProfileScreen
+              user={meAsProfile}
+              currentUser={{ id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender }}
+              onBack={() => setShowMyProfilePage(false)}
+              onWalletUpdate={refreshUser}
+              onOpenTopup={() => { setShowMyProfilePage(false); setTabToReturnTo("me"); setShowTopupPage(true); }}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </PrivilegesProvider>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
     if (showTopupPage) {
       return (
-        <AppAlertProvider>
-          <TopupScreen onBack={() => setShowTopupPage(false)} />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <TopupScreen onBack={() => setShowTopupPage(false)} />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
-    if (socialListType) {
+    if (showRevenuesPage) {
+      return (
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <RevenuesScreen onBack={() => setShowRevenuesPage(false)} />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
+      );
+    }
+    if (showTaskCenterPage) {
+      const handleNavigateTo = (section: "messages" | "moments" | "profile" | "social") => {
+        setShowTaskCenterPage(false);
+        if (section === "social") {
+          setSocialListType("friends");
+        } else {
+          const map: Record<string, TabId> = { messages: "messages", moments: "moment", profile: "me" };
+          setTabToReturnTo(map[section] ?? "home");
+        }
+      };
+      return (
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <TaskCenterScreen
+              onBack={() => setShowTaskCenterPage(false)}
+              onWalletUpdate={refreshUser}
+              onNavigateTo={handleNavigateTo}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
+      );
+    }
+    if (showDecorationsPage) {
+      return (
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <DecorationsScreen onBack={() => setShowDecorationsPage(false)} />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
+      );
+    }
+    if (showSettingsPage) {
+      return (
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <PrivilegesProvider>
+        <>
+          <AppAlertProvider>
+            {showPrivilegesPage ? (
+              <PrivilegesScreen onBack={() => setShowPrivilegesPage(false)} />
+            ) : (
+              <SettingsScreen
+                onBack={() => { setShowSettingsPage(false); setShowPrivilegesPage(false); }}
+                onLogout={handleLogout}
+                onOpenPrivileges={() => setShowPrivilegesPage(true)}
+              />
+            )}
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </PrivilegesProvider>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
+      );
+    }
+    if (socialListType || visitorsPageMode) {
       if (selectedAdmirer) {
         const { user: admirerUser, isFriend } = selectedAdmirer;
         const profileUser: UserSearchResult = {
@@ -942,71 +1296,217 @@ export default function Page() {
           gender: admirerUser.gender,
         };
         return (
-          <AppAlertProvider>
-            <UserProfileScreen
-              user={profileUser}
-              currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
-              onBack={() => setSelectedAdmirer(null)}
-              fromAdmirers
-              isFriend={isFriend}
-              onAcceptFriend={() => setSelectedAdmirer(null)}
-              onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
-            />
-          </AppAlertProvider>
+          <View style={{ flex: 1 }}>
+            <OfflineBanner />
+            <ThemeProvider>
+          <LanguageProvider>
+          <PrivilegesProvider>
+          <>
+            <AppAlertProvider>
+              <UserProfileScreen
+                user={profileUser}
+                currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
+                onBack={() => setSelectedAdmirer(null)}
+                fromAdmirers={!!socialListType}
+                isFriend={isFriend}
+                onAcceptFriend={() => setSelectedAdmirer(null)}
+                onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
+                onWalletUpdate={refreshUser}
+                onOpenTopup={() => { setSocialListType(null); setVisitorsPageMode(null); setSelectedAdmirer(null); setShowTopupPage(true); }}
+              />
+            </AppAlertProvider>
+            <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+          </>
+          </PrivilegesProvider>
+          </LanguageProvider>
+        </ThemeProvider>
+          </View>
+        );
+      }
+      if (socialListType) {
+        return (
+          <View style={{ flex: 1 }}>
+            <OfflineBanner />
+            <ThemeProvider>
+          <LanguageProvider>
+          <>
+            <AppAlertProvider>
+              <SocialListScreen
+                type={socialListType}
+                currentUserId={user?.id}
+                onBack={() => { setSocialListType(null); setVisitorsPageMode(null); setSelectedAdmirer(null); }}
+                onSwitchType={setSocialListType}
+                onAdmirerPress={(u, isFriend) => setSelectedAdmirer({ user: u, isFriend })}
+              />
+            </AppAlertProvider>
+            <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+          </>
+          </LanguageProvider>
+        </ThemeProvider>
+          </View>
         );
       }
       return (
-        <AppAlertProvider>
-          <SocialListScreen
-            type={socialListType}
-            currentUserId={user?.id}
-            onBack={() => { setSocialListType(null); setSelectedAdmirer(null); }}
-            onSwitchType={setSocialListType}
-            onAdmirerPress={(u, isFriend) => setSelectedAdmirer({ user: u, isFriend })}
-          />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <VisitorsScreen
+              mode={visitorsPageMode}
+              currentUserId={user?.id}
+              onBack={() => { setVisitorsPageMode(null); setSelectedAdmirer(null); }}
+              onUserPress={(u, isFriend) => setSelectedAdmirer({ user: u, isFriend })}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
     if (showSearchPage) {
       if (selectedSearchUser) {
         return (
-          <AppAlertProvider>
-            <UserProfileScreen
-              user={selectedSearchUser}
-              currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
-              onBack={() => setSelectedSearchUser(null)}
-              onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
-            />
-          </AppAlertProvider>
+          <View style={{ flex: 1 }}>
+            <OfflineBanner />
+            <ThemeProvider>
+          <LanguageProvider>
+          <PrivilegesProvider>
+          <>
+            <AppAlertProvider>
+              <UserProfileScreen
+                user={selectedSearchUser}
+                currentUser={user ? { id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender } : null}
+                onBack={() => setSelectedSearchUser(null)}
+                onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
+                onWalletUpdate={refreshUser}
+                onOpenTopup={() => { setShowSearchPage(false); setSelectedSearchUser(null); setShowTopupPage(true); }}
+              />
+            </AppAlertProvider>
+            <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+          </>
+          </PrivilegesProvider>
+          </LanguageProvider>
+        </ThemeProvider>
+          </View>
         );
       }
       return (
-        <AppAlertProvider>
-          <SearchScreen
-            onBack={() => {
-              setShowSearchPage(false);
-              setSelectedSearchUser(null);
-            }}
-            onUserPress={(u: UserSearchResult) => setSelectedSearchUser(u)}
-          />
-        </AppAlertProvider>
+        <View style={{ flex: 1 }}>
+          <OfflineBanner />
+          <ThemeProvider>
+        <LanguageProvider>
+        <>
+          <AppAlertProvider>
+            <SearchScreen
+              onBack={() => {
+                setShowSearchPage(false);
+                setSelectedSearchUser(null);
+              }}
+              onUserPress={(u: UserSearchResult) => setSelectedSearchUser(u)}
+            />
+          </AppAlertProvider>
+          <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+        </>
+        </LanguageProvider>
+      </ThemeProvider>
+        </View>
       );
     }
     return (
-      <AppAlertProvider>
-        <MainTabsScreen
-          user={user}
-          onEditProfile={() => setShowProfileEdit(true)}
-          onOpenInfoPage={() => setShowInfoPage(true)}
-          onOpenTopup={() => setShowTopupPage(true)}
-          onOpenAdmirers={() => setSocialListType("admirers")}
-          onOpenFollowing={() => setSocialListType("following")}
-          onOpenFriends={() => setSocialListType("friends")}
-          onOpenSearch={() => setShowSearchPage(true)}
-          onLogout={handleLogout}
-          onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
-        />
-      </AppAlertProvider>
+      <View style={{ flex: 1 }}>
+        <OfflineBanner />
+        <ThemeProvider>
+      <LanguageProvider>
+      <PrivilegesProvider>
+      <>
+        <AppAlertProvider>
+          <View style={{ flex: 1 }}>
+            <MainTabsScreen
+              user={user}
+              onEditProfile={() => { setTabToReturnTo("me"); setShowProfileEdit(true); }}
+              onOpenInfoPage={() => { setTabToReturnTo("me"); setShowInfoPage(true); }}
+              onOpenTopup={() => { setTabToReturnTo("me"); setShowTopupPage(true); }}
+              onOpenRevenues={() => { setTabToReturnTo("me"); setShowRevenuesPage(true); }}
+              onOpenTaskCenter={() => { setTabToReturnTo("me"); setShowTaskCenterPage(true); }}
+              onOpenDecorations={() => { setTabToReturnTo("me"); setShowDecorationsPage(true); }}
+              onOpenSettings={() => { setTabToReturnTo("me"); setShowSettingsPage(true); }}
+              onOpenAdmirers={() => { setTabToReturnTo("me"); setSocialListType("admirers"); }}
+              onOpenVisitors={() => { setTabToReturnTo("me"); setVisitorsPageMode("visitors"); }}
+              onOpenProfileLikers={() => { setTabToReturnTo("me"); setVisitorsPageMode("profileLikers"); }}
+              onOpenFollowing={() => { setTabToReturnTo("me"); setSocialListType("following"); }}
+              onOpenFriends={() => { setTabToReturnTo("me"); setSocialListType("friends"); }}
+              onOpenSearch={() => { setTabToReturnTo("home"); setShowSearchPage(true); }}
+              onOpenChat={(u: UserSearchResult) => setSelectedChatUser(u)}
+              onOpenGroupChat={() => {
+                setTabToReturnTo("messages");
+                setUserDismissedGroupChatMini(false);
+                setShowGroupChatPage(true);
+              }}
+              onMessagesTabActive={() => {}}
+              onOpenMyProfile={() => { setTabToReturnTo("me"); setShowMyProfilePage(true); }}
+              onWalletUpdate={refreshUser}
+              initialTab={tabToReturnTo}
+              onTabRestored={() => setTabToReturnTo(null)}
+            />
+            {showGroupChatPage && user && (
+              <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
+                <GroupChatScreen
+                  user={user}
+                  selectedSlot={groupChatSelectedSlot}
+                  onSelectedSlotChange={setGroupChatSelectedSlot}
+                  onBack={() => {
+                    setShowGroupChatPage(false);
+                    setShowGroupChatMini(true);
+                    leaveGroupChat().catch(() => {});
+                  }}
+                  onOpenTopup={() => {
+                    setTabToReturnTo("messages");
+                    setShowGroupChatPage(false);
+                    setShowTopupPage(true);
+                  }}
+                />
+              </View>
+            )}
+            {showGroupChatMini && !showGroupChatPage && (
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    zIndex: 9998,
+                    pointerEvents: "box-none",
+                    elevation: 9998,
+                    backgroundColor: "transparent",
+                  },
+                ]}
+                pointerEvents="box-none"
+                collapsable={false}
+              >
+                <GroupChatMiniFloating
+                  onOpen={() => {
+                    setTabToReturnTo("messages");
+                    setUserDismissedGroupChatMini(false);
+                    setShowGroupChatPage(true);
+                  }}
+                  onClose={() => {
+                    setShowGroupChatMini(false);
+                    setUserDismissedGroupChatMini(true);
+                    setGroupChatSelectedSlot(null);
+                  }}
+                />
+              </View>
+            )}
+          </View>
+        </AppAlertProvider>
+        <CheckInContinuousModal visible onClose={() => {}} onOpenTaskCenter={openTaskCenter} onWalletUpdate={refreshUser} />
+      </>
+      </PrivilegesProvider>
+      </LanguageProvider>
+    </ThemeProvider>
+      </View>
     );
   }
 
@@ -1015,7 +1515,9 @@ export default function Page() {
   const isSignup = authState === "signup";
 
   return (
-    <AppAlertProvider>
+    <View style={{ flex: 1 }}>
+      <OfflineBanner />
+      <AppAlertProvider>
       <KeyboardAvoidingView
         style={styles.loginContainer}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -1143,6 +1645,7 @@ export default function Page() {
         </ScrollView>
       </KeyboardAvoidingView>
     </AppAlertProvider>
+    </View>
   );
 }
 
@@ -1463,6 +1966,14 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingBottom: 1,
   },
+  floatingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+  },
   tabBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1471,10 +1982,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingBottom: Platform.OS === "ios" ? 8 : 6,
     marginHorizontal: 12,
-    marginBottom: Platform.OS === "ios" ? 0 : 40,
+    marginBottom: Platform.OS === "ios" ? 0 : 70,
     backgroundColor: CARD_BG,
     borderRadius: 18,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: BORDER_SOFT,
   },
   tabItem: {
