@@ -1,7 +1,29 @@
-import React, { useEffect, useState } from "react";
-import { StyleSheet, View, TouchableOpacity, Platform, Text, ScrollView, Dimensions, Image } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  StyleSheet,
+  View,
+  TouchableOpacity,
+  Platform,
+  Text,
+  ScrollView,
+  Dimensions,
+  Image,
+  FlatList,
+  TextInput,
+  KeyboardAvoidingView,
+  ActivityIndicator,
+  RefreshControl,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { joinGroupChat, leaveGroupChat } from "../../utils/messagesApi";
+import {
+  joinGroupChat,
+  leaveGroupChat,
+  fetchGroupChatMessages,
+  sendGroupChatMessage,
+  setGroupChatMessagesCache,
+  getGroupChatMessagesCache,
+  type GroupChatMessage,
+} from "../../utils/messagesApi";
 import { API_BASE_URL } from "../../utils/authHelper";
 
 function getImageUrl(url: string | null | undefined): string {
@@ -15,6 +37,7 @@ const BG_DARK = "#1a1625";
 const TEXT_LIGHT = "#f5f3ff";
 
 type UserInfo = { id?: string; name?: string; profileImage?: string };
+type SlotInfo = { userId: string; name?: string; profileImage?: string | null };
 type Props = {
   user: UserInfo | null;
   selectedSlot?: string | null;
@@ -22,14 +45,35 @@ type Props = {
   onBack: () => void;
   onOpenTopup?: () => void;
   onOpenUsers?: () => void;
+  onOpenProfile?: (slot: SlotInfo) => void;
 };
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const AVATAR_COLS = 4;
 const AVATAR_GAP = 10;
+const CARD_BG = "rgba(45, 38, 64, 0.6)";
+const TEXT_MUTED = "#a1a1aa";
+const ACCENT = "#a78bfa";
+
 export default function GroupChatScreen({ user, onBack, onOpenUsers }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [mySlotIndex, setMySlotIndex] = useState<number | null>(null);
+  const [messages, setMessages] = useState<GroupChatMessage[]>(() => getGroupChatMessagesCache());
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [inputText, setInputText] = useState("");
+  const flatRef = useRef<FlatList>(null);
+  const currentUserId = user?.id || "";
+
+  const loadMessages = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    const cached = getGroupChatMessagesCache();
+    if (cached.length > 0) setMessages(cached);
+    const msgs = await fetchGroupChatMessages();
+    setMessages(msgs);
+    setGroupChatMessagesCache(msgs);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     joinGroupChat().catch(() => {});
@@ -37,6 +81,57 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers }: Props) {
       void leaveGroupChat().catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    setMessages(getGroupChatMessagesCache());
+    loadMessages(true);
+  }, [loadMessages]);
+
+  useEffect(() => {
+    const t = setInterval(() => loadMessages(true), 1500);
+    return () => clearInterval(t);
+  }, [loadMessages]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadMessages();
+    setRefreshing(false);
+  }, [loadMessages]);
+
+  const handleSend = useCallback(async () => {
+    const text = inputText.trim();
+    if (!text) return;
+    setInputText("");
+    const tempId = `temp_${Date.now()}`;
+    const optimistic: GroupChatMessage = {
+      id: tempId,
+      fromId: currentUserId,
+      fromName: user?.name || "مستخدم",
+      fromProfileImage: user?.profileImage ?? null,
+      text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => {
+      const next = [...prev, optimistic];
+      setGroupChatMessagesCache(next);
+      return next;
+    });
+    setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 50);
+    const msg = await sendGroupChatMessage(text);
+    if (msg) {
+      setMessages((prev) => {
+        const next = prev.map((m) => (m.id === tempId ? { ...msg, id: String(msg.id) } : m));
+        setGroupChatMessagesCache(next);
+        return next;
+      });
+    } else {
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== tempId);
+        setGroupChatMessagesCache(filtered);
+        return filtered;
+      });
+    }
+  }, [inputText, currentUserId, user?.name, user?.profileImage]);
 
   const avatarSize = expanded ? (SCREEN_WIDTH - 32 - AVATAR_GAP * (AVATAR_COLS + 1)) / AVATAR_COLS : 32;
 
@@ -159,8 +254,67 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers }: Props) {
         )}
       </View>
       <View style={styles.content}>
-        {/* سنبني المحتوى خطوة بخطوة */}
+        {loading && messages.length === 0 ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={ACCENT} />
+          </View>
+        ) : (
+          <FlatList
+            ref={flatRef}
+            data={messages}
+            renderItem={({ item }) => {
+              const isMe = item.fromId === currentUserId;
+              return (
+                <View style={[styles.msgRow, isMe && styles.msgRowMe]}>
+                  {!isMe && item.fromProfileImage ? (
+                    <Image source={{ uri: getImageUrl(item.fromProfileImage) }} style={styles.msgAvatar} />
+                  ) : !isMe ? (
+                    <View style={[styles.msgAvatar, styles.placeholderAvatar]}>
+                      <Ionicons name="person" size={14} color={TEXT_MUTED} />
+                    </View>
+                  ) : null}
+                  <View style={[styles.msgBubble, isMe && styles.msgBubbleMe]}>
+                    {!isMe && <Text style={styles.msgName}>{item.fromName}</Text>}
+                    <Text style={styles.msgText}>{item.text}</Text>
+                    <Text style={styles.msgTime}>
+                      {item.createdAt ? new Date(item.createdAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }) : ""}
+                    </Text>
+                  </View>
+                </View>
+              );
+            }}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.listContent}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
+            ListEmptyComponent={
+              <View style={styles.emptyWrap}>
+                <Ionicons name="chatbubbles-outline" size={48} color={TEXT_MUTED} />
+                <Text style={styles.emptyText}>لا توجد رسائل بعد. ابدأ المحادثة!</Text>
+              </View>
+            }
+          />
+        )}
       </View>
+
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+      >
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.input}
+            placeholder="اكتب رسالة..."
+            placeholderTextColor={TEXT_MUTED}
+            value={inputText}
+            onChangeText={setInputText}
+            onSubmitEditing={handleSend}
+            returnKeyType="send"
+          />
+          <TouchableOpacity style={styles.sendBtn} onPress={handleSend} activeOpacity={0.8}>
+            <Ionicons name="send" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -291,4 +445,53 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   content: { flex: 1 },
+  loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  listContent: { padding: 10, paddingBottom: 24 },
+  emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 8 },
+  emptyText: { fontSize: 14, color: TEXT_MUTED },
+  msgRow: { flexDirection: "row", marginBottom: 12, alignItems: "flex-start" },
+  msgRowMe: { flexDirection: "row-reverse" },
+  msgAvatar: { width: 28, height: 28, borderRadius: 14, marginHorizontal: 6 },
+  placeholderAvatar: { backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" },
+  msgBubble: {
+    maxWidth: "75%",
+    backgroundColor: CARD_BG,
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.15)",
+  },
+  msgBubbleMe: { backgroundColor: "rgba(167, 139, 250, 0.25)" },
+  msgName: { fontSize: 11, color: ACCENT, marginBottom: 2 },
+  msgText: { fontSize: 14, color: TEXT_LIGHT },
+  msgTime: { fontSize: 10, color: TEXT_MUTED, marginTop: 4 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 8,
+    paddingBottom: Platform.OS === "ios" ? 28 : 76,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    backgroundColor: BG_DARK,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: CARD_BG,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: TEXT_LIGHT,
+    borderWidth: 1,
+    borderColor: "rgba(167, 139, 250, 0.2)",
+  },
+  sendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: ACCENT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

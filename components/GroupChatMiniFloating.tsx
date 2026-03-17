@@ -1,17 +1,11 @@
-import { useRef, useEffect } from "react";
-import {
-  StyleSheet,
-  View,
-  PanResponder,
-  Animated,
-  Dimensions,
-  Platform,
-} from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import React, { useEffect, useState } from "react";
+import { StyleSheet, Text, View, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { fetchGroupChatSlots } from "../utils/messagesApi";
 
-const SIZE = 52;
-const X_ZONE_SIZE = 28;
+const BG = "rgba(26,22,37,0.95)";
+const TEXT_LIGHT = "#f5f3ff";
+const ACCENT = "#a78bfa";
 
 type Props = {
   onOpen: () => void;
@@ -19,132 +13,87 @@ type Props = {
 };
 
 export default function GroupChatMiniFloating({ onOpen, onClose }: Props) {
-  const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
-
-  const defaultX = screenWidth - 18 - SIZE;
-  const defaultY = Platform.OS === "ios" ? 60 : 40;
-
-  const pan = useRef(new Animated.ValueXY()).current;
-  const positionRef = useRef({ x: defaultX, y: defaultY });
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gestureState) => {
-        const newX = Math.max(8, Math.min(screenWidth - SIZE - 8, positionRef.current.x + gestureState.dx));
-        const newY = Math.max(8, Math.min(screenHeight - 180, positionRef.current.y + gestureState.dy));
-        pan.setValue({
-          x: newX - positionRef.current.x,
-          y: newY - positionRef.current.y,
-        });
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        const newX = Math.max(8, Math.min(screenWidth - SIZE - 8, positionRef.current.x + gestureState.dx));
-        const newY = Math.max(8, Math.min(screenHeight - 180, positionRef.current.y + gestureState.dy));
-        positionRef.current = { x: newX, y: newY };
-        pan.flattenOffset();
-        pan.setOffset({ x: newX, y: newY });
-        pan.setValue({ x: 0, y: 0 });
-
-        const moved = Math.abs(gestureState.dx) + Math.abs(gestureState.dy);
-        if (moved < 12) {
-          const tapScreenX = gestureState.x0 + gestureState.dx;
-          const tapScreenY = gestureState.y0 + gestureState.dy;
-          const localX = tapScreenX - positionRef.current.x;
-          const localY = tapScreenY - positionRef.current.y;
-          if (localX > SIZE - X_ZONE_SIZE && localY < X_ZONE_SIZE) {
-            onClose();
-          } else {
-            onOpen();
-          }
-        }
-      },
-    })
-  ).current;
+  const [count, setCount] = useState(0);
 
   useEffect(() => {
-    positionRef.current = { x: defaultX, y: defaultY };
-    pan.setOffset({ x: defaultX, y: defaultY });
-    pan.setValue({ x: 0, y: 0 });
+    const load = () => {
+      fetchGroupChatSlots().then((slots) => {
+        const active = slots.filter((s) => s != null).length;
+        setCount(active);
+      }).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
   }, []);
 
   return (
-    <Animated.View
-      style={[
-        styles.wrap,
-        {
-          transform: [{ translateX: pan.x }, { translateY: pan.y }],
-        },
-      ]}
-      {...panResponder.panHandlers}
-      collapsable={false}
-    >
-      <View style={styles.inner} collapsable={false}>
-        {Platform.OS === "ios" ? (
-          <LinearGradient
-            colors={["#0d9488", "#14b8a6", "#2dd4bf", "#5eead4"]}
-            start={{ x: 0, y: 1 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.gradient}
-          />
-        ) : (
-          <View style={[styles.gradient, { backgroundColor: "#14b8a6" }]} />
-        )}
-        <View style={styles.chatIconWrap}>
-          <Ionicons name="chatbubbles" size={22} color="#fff" />
+    <View style={styles.wrap} pointerEvents="box-none">
+      <TouchableOpacity style={styles.bubble} onPress={onOpen} activeOpacity={0.8}>
+        <View style={styles.iconWrap}>
+          <Ionicons name="people" size={24} color={ACCENT} />
+          {count > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{count}</Text>
+            </View>
+          )}
         </View>
-        <View style={styles.closeBtn}>
-          <Ionicons name="close" size={14} color="#fff" />
-        </View>
-      </View>
-    </Animated.View>
+        <Text style={styles.label}>دردشة جماعية</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+        <Ionicons name="close" size={18} color={TEXT_LIGHT} />
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: {
     position: "absolute",
-    left: 0,
-    top: 0,
-    zIndex: 9999,
-    elevation: 9999,
+    bottom: 100,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  inner: {
-    width: SIZE,
-    height: SIZE,
-    borderRadius: 12,
-    overflow: "hidden",
-    shadowColor: "#0d9488",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-    elevation: 12,
+  bubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: BG,
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.3)",
   },
-  gradient: {
-    width: SIZE,
-    height: SIZE,
-    borderRadius: 12,
+  iconWrap: {
+    position: "relative",
   },
-  chatIconWrap: {
+  badge: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
+    top: -4,
+    right: -4,
+    backgroundColor: ACCENT,
+    borderRadius: 14,
+    minWidth: 18,
+    height: 18,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1a1625",
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: TEXT_LIGHT,
   },
   closeBtn: {
-    position: "absolute",
-    top: 2,
-    right: 2,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
+    padding: 8,
   },
 });

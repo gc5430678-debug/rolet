@@ -2,7 +2,7 @@ import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, AppState }
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState, useCallback } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchInbox, fetchOnlineUserIds, type InboxItem } from "../../utils/messagesApi";
+import { fetchInbox, fetchOnlineUserIds, fetchGroupChatMessages, getGroupChatMessagesCache, type InboxItem } from "../../utils/messagesApi";
 import type { UserSearchResult } from "../../utils/usersApi";
 import { API_BASE_URL } from "../../utils/authHelper";
 import { useLanguage } from "../_contexts/LanguageContext";
@@ -31,10 +31,19 @@ export default function MessagesScreen({ onOpenChat, onOpenGroupChat }: Props) {
   const { theme } = useTheme();
   const [items, setItems] = useState<InboxItem[]>([]);
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const [lastGroupMsg, setLastGroupMsg] = useState<{ text: string; createdAt: string } | null>(null);
 
   const loadData = useCallback(() => {
     fetchInbox().then(setItems);
     fetchOnlineUserIds().then((ids) => setOnlineIds(new Set(ids)));
+    fetchGroupChatMessages().then((msgs) => {
+      const last = msgs[msgs.length - 1] ?? getGroupChatMessagesCache().slice(-1)[0];
+      setLastGroupMsg(last ? { text: last.text || "رسالة", createdAt: last.createdAt } : null);
+    }).catch(() => {
+      const cached = getGroupChatMessagesCache();
+      const last = cached[cached.length - 1];
+      setLastGroupMsg(last ? { text: last.text || "رسالة", createdAt: last.createdAt } : null);
+    });
   }, []);
 
   useEffect(() => {
@@ -75,23 +84,30 @@ export default function MessagesScreen({ onOpenChat, onOpenGroupChat }: Props) {
         </View>
       </LinearGradient>
 
-      {/* دردشة جماعية مجانية — خلفية مختلفة وجذابة */}
-      <TouchableOpacity activeOpacity={0.85} onPress={onOpenGroupChat} disabled={!onOpenGroupChat}>
-      <LinearGradient
-        colors={["#0d9488", "#14b8a6", "#2dd4bf", "#5eead4"]}
-        start={{ x: 0, y: 1 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.groupChatBanner}
+      {/* دردشة جماعية — صف شبيه بالرسائل الخاصة */}
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={onOpenGroupChat}
+        disabled={!onOpenGroupChat}
+        style={styles.row}
       >
-        <View style={styles.groupChatIconWrap}>
-          <Ionicons name="people" size={20} color="#fff" />
+        <View style={styles.avatarWrap}>
+          <View style={[styles.avatar, styles.groupChatAvatar]}>
+            <Ionicons name="people" size={22} color="#14b8a6" />
+          </View>
         </View>
-        <View style={styles.groupChatTextCol}>
-          <Text style={styles.groupChatText}>دردشة جماعية مجانية</Text>
-          <Text style={styles.groupChatSub}>تواصل مع الجميع</Text>
+        <View style={styles.rowText}>
+          <Text style={styles.name} numberOfLines={1}>دردشة جماعية</Text>
+          <Text style={styles.preview} numberOfLines={1}>
+            {lastGroupMsg?.text ?? "تواصل مع الجميع"}
+          </Text>
         </View>
-        <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.9)" />
-      </LinearGradient>
+        <Text style={styles.time}>
+          {lastGroupMsg?.createdAt
+            ? new Date(lastGroupMsg.createdAt).toLocaleTimeString(lang === "ar" ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" })
+            : ""}
+        </Text>
+        <Ionicons name="chevron-forward" size={18} color={TEXT_MUTED} />
       </TouchableOpacity>
 
       {items.length === 0 ? (
@@ -204,45 +220,6 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.9)",
     letterSpacing: 0.2,
   },
-  groupChatBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginHorizontal: 18,
-    marginBottom: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    gap: 10,
-    overflow: "hidden",
-    shadowColor: "#0d9488",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  groupChatIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.28)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  groupChatTextCol: {
-    flex: 1,
-    gap: 1,
-  },
-  groupChatText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#fff",
-    letterSpacing: 0.25,
-  },
-  groupChatSub: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.92)",
-    letterSpacing: 0.2,
-  },
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -263,6 +240,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(45,38,64,0.8)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  groupChatAvatar: {
+    backgroundColor: "#0d948822",
+    alignItems: "center",
+    justifyContent: "center",
   },
   onlineDot: {
     position: "absolute",

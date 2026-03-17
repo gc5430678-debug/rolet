@@ -1,3 +1,10 @@
+// LiveKit requires native modules — only works in development build, not Expo Go
+try {
+  require("@livekit/react-native").registerGlobals();
+} catch {
+  if (__DEV__) console.warn("[LiveKit] Voice unavailable in Expo Go — use `npx expo run:android` for voice.");
+}
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -14,7 +21,11 @@ import {
   Image,
   Pressable,
   AppState,
+  LogBox,
 } from "react-native";
+
+// تثبيط خطأ "Unable to activate keep awake" في Expo Go — معروف ولا يؤثر على التشغيل
+LogBox.ignoreLogs(["keep awake"]);
 import { useFonts } from "expo-font";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import LottieView from "lottie-react-native";
@@ -23,8 +34,8 @@ import axios from "axios";
 import * as ImagePicker from "expo-image-picker";
 import * as Localization from "expo-localization";
 import { checkAuthStatus, API_BASE_URL } from "../utils/authHelper";
-import { leaveGroupChat } from "../utils/messagesApi";
-import { registerPushTokenWithBackend, notifyFriendsOnline, notifyOffline } from "../utils/pushNotifications";
+import { leaveGroupChat, fetchGroupChatSlots } from "../utils/messagesApi";
+import { registerPushTokenWithBackend, notifyFriendsOnline, notifyOffline, setupNotificationResponseListener } from "../utils/pushNotifications";
 import { getFlagEmoji, getCountryName } from "../utils/countries";
 import type { UserSearchResult } from "../utils/usersApi";
 import type { SocialUser } from "../utils/socialApi";
@@ -681,6 +692,7 @@ export default function Page() {
   const [selectedSearchUser, setSelectedSearchUser] = useState<UserSearchResult | null>(null);
   const [selectedChatUser, setSelectedChatUser] = useState<UserSearchResult | null>(null);
   const [profileFromChatUser, setProfileFromChatUser] = useState<UserSearchResult | null>(null);
+  const [profileFromGroupChatUser, setProfileFromGroupChatUser] = useState<UserSearchResult | null>(null);
   const [showMyProfilePage, setShowMyProfilePage] = useState(false);
 
   const openTaskCenter = useCallback(() => {
@@ -764,6 +776,23 @@ export default function Page() {
     }
   }, [authState, user?.id]);
 
+  // ——— عند الضغط على إشعار رسالة — فتح المحادثة مع المرسل ———
+  useEffect(() => {
+    if (authState !== "main" || !user) return;
+    const remove = setupNotificationResponseListener((u) => {
+      setTabToReturnTo("messages");
+      setSelectedChatUser({
+        id: u.id,
+        name: u.name,
+        profileImage: u.profileImage || "",
+        age: null,
+        country: "",
+        gender: "",
+      });
+    });
+    return () => remove();
+  }, [authState, user]);
+
   // ——— إعادة التحقق + إشعار الأصدقاء عند العودة للتطبيق + نبض اتصال ———
   useEffect(() => {
     if (authState !== "main" || !user) return;
@@ -808,6 +837,13 @@ export default function Page() {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
     };
   }, [authState, user]);
+
+  // ——— نبض عند وجود المربع المصغر — لإبقاء المستخدم في الغرفة حتى يُحدّث الباك اند lastSeen ———
+  useEffect(() => {
+    if (!showGroupChatMini || showGroupChatPage) return;
+    const t = setInterval(() => fetchGroupChatSlots().catch(() => {}), 2000);
+    return () => clearInterval(t);
+  }, [showGroupChatMini, showGroupChatPage]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -1464,7 +1500,6 @@ export default function Page() {
                     setShowGroupChatPage(false);
                     setShowGroupChatUsersPage(false);
                     setShowGroupChatMini(true);
-                    leaveGroupChat().catch(() => {});
                   }}
                   onOpenTopup={() => {
                     setTabToReturnTo("messages");
@@ -1472,12 +1507,40 @@ export default function Page() {
                     setShowTopupPage(true);
                   }}
                   onOpenUsers={() => setShowGroupChatUsersPage(true)}
+                  onOpenProfile={(slot) => {
+                    const profileUser: UserSearchResult = {
+                      id: slot.userId,
+                      name: slot.name || "",
+                      profileImage: slot.profileImage || "",
+                      age: null,
+                      country: "",
+                      gender: "",
+                    };
+                    setProfileFromGroupChatUser(profileUser);
+                  }}
                 />
               </View>
             )}
             {showGroupChatUsersPage && (
               <View style={[StyleSheet.absoluteFill, { zIndex: 10000 }]}>
                 <GroupChatUsersScreen onBack={() => setShowGroupChatUsersPage(false)} />
+              </View>
+            )}
+            {profileFromGroupChatUser && showGroupChatPage && user && (
+              <View style={[StyleSheet.absoluteFill, { zIndex: 10001 }]}>
+                <UserProfileScreen
+                  user={profileFromGroupChatUser}
+                  currentUser={{ id: user.id, name: user.name, profileImage: user.profileImage, age: user.age, country: user.country, gender: user.gender }}
+                  onBack={() => setProfileFromGroupChatUser(null)}
+                  onOpenChat={() => setProfileFromGroupChatUser(null)}
+                  onWalletUpdate={refreshUser}
+                  onOpenTopup={() => {
+                    setProfileFromGroupChatUser(null);
+                    setTabToReturnTo("messages");
+                    setShowGroupChatPage(false);
+                    setShowTopupPage(true);
+                  }}
+                />
               </View>
             )}
             {showGroupChatMini && !showGroupChatPage && (
@@ -1504,6 +1567,7 @@ export default function Page() {
                     setShowGroupChatMini(false);
                     setUserDismissedGroupChatMini(true);
                     setGroupChatSelectedSlot(null);
+                    leaveGroupChat().catch(() => {});
                   }}
                 />
               </View>

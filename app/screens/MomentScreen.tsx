@@ -34,6 +34,7 @@ import {
 } from "../../utils/tasksApi";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { fetchFollowing } from "../../utils/socialApi";
+import { fetchOnlineUserIds } from "../../utils/messagesApi";
 import { useAppAlert } from "../../components/AppAlertProvider";
 import { useTheme } from "../_contexts/ThemeContext";
 import { useLanguage } from "../_contexts/LanguageContext";
@@ -107,6 +108,7 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
   const { t, lang } = useLanguage();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [posting, setPosting] = useState(false);
   const [videoModal, setVideoModal] = useState<Moment | null>(null);
@@ -124,10 +126,12 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
   const [countryModalVisible, setCountryModalVisible] = useState(false);
   const [bonusModal, setBonusModal] = useState<{ reward: number } | null>(null);
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
 
   const loadMoments = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    setLoadError(null);
     try {
       const [list, followingList] = await Promise.all([
         fetchMoments(),
@@ -140,8 +144,9 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
         if (uid) ids.add(uid);
         setFollowingIds(ids);
       }
-    } catch {
+    } catch (e: any) {
       setMoments([]);
+      setLoadError(e?.message || "تعذر تحميل اللحظات");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -165,6 +170,13 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
     });
     return () => { cancelled = true; };
   }, [currentUserId]);
+
+  useEffect(() => {
+    const load = () => fetchOnlineUserIds().then((ids) => setOnlineIds(new Set(ids)));
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -461,6 +473,7 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
                       <Ionicons name="person" size={16} color={TEXT_MUTED} />
                     </View>
                   )}
+                  {item.userId && onlineIds.has(item.userId) && <View style={styles.onlineDot} />}
                 </View>
                 <View style={styles.userTextCol}>
                   <Text style={styles.gridName} numberOfLines={1}>
@@ -510,7 +523,7 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
         </View>
       );
     },
-    [handleLike, openVideo, handleDelete, currentUserId, user, lang, t]
+    [handleLike, openVideo, handleDelete, currentUserId, user, lang, t, onlineIds]
   );
 
   if (loading && moments.length === 0) {
@@ -603,11 +616,26 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
           <RefreshControl refreshing={refreshing} onRefresh={() => loadMoments(true)} tintColor={ACCENT_SOFT} />
         }
         ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Ionicons name="images-outline" size={56} color={TEXT_MUTED} />
-            <Text style={styles.emptyTitle}>{t("momentScreen.emptyTitle")}</Text>
-            <Text style={styles.emptySub}>{t("momentScreen.emptySub")}</Text>
-          </View>
+          loadError ? (
+            <View style={styles.emptyWrap}>
+              <Ionicons name="cloud-offline-outline" size={56} color="#f87171" />
+              <Text style={styles.emptyTitle}>{loadError}</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => loadMoments(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="refresh" size={20} color="#fff" />
+                <Text style={styles.retryBtnText}>{t("momentScreen.retry")}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.emptyWrap}>
+              <Ionicons name="images-outline" size={56} color={TEXT_MUTED} />
+              <Text style={styles.emptyTitle}>{t("momentScreen.emptyTitle")}</Text>
+              <Text style={styles.emptySub}>{t("momentScreen.emptySub")}</Text>
+            </View>
+          )
         }
       />
 
@@ -1009,12 +1037,24 @@ const styles = StyleSheet.create({
   },
   userInfoRow: { flexDirection: "row", alignItems: "center", flex: 1, gap: 10 },
   avatarSmallWrap: {
+    position: "relative",
     width: 40,
     height: 40,
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(167, 139, 250, 0.4)",
+  },
+  onlineDot: {
+    position: "absolute",
+    bottom: 1,
+    right: 1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#22c55e",
+    borderWidth: 1.5,
+    borderColor: PURPLE_DARK,
   },
   avatarSmall: { width: "100%", height: "100%" },
   avatarSmallPlaceholder: {
@@ -1066,6 +1106,17 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: "center", paddingVertical: 48, gap: 12, flex: 1 },
   emptyTitle: { fontSize: 18, fontWeight: "700", color: TEXT_LIGHT },
   emptySub: { fontSize: 14, color: TEXT_MUTED },
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: ACCENT_SOFT,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  retryBtnText: { fontSize: 16, fontWeight: "600", color: "#fff" },
   fab: {
     position: "absolute",
     bottom: 24,

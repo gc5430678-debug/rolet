@@ -5,7 +5,7 @@ import { Audio } from "expo-av";
 import LottieView from "lottie-react-native";
 import type { UserSearchResult } from "../../utils/usersApi";
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, uploadImageMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, buildSenderForNotification, fetchOnlineUserIds, type ChatMessage } from "../../utils/messagesApi";
+import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, uploadImageMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, buildSenderForNotification, type ChatMessage } from "../../utils/messagesApi";
 import { fetchWallet } from "../../utils/walletApi";
 import { claimFiveMessagesBonus, setLocalClaimedAt, claimDiceBonus, setLocalDiceClaimedAt } from "../../utils/tasksApi";
 import * as ImagePicker from "expo-image-picker";
@@ -20,7 +20,6 @@ import roseAnim from "../../assets/animations/rose.json";
 import flowerAnim from "../../assets/animations/floer.json";
 import surpriseGiftAnim from "../../assets/animations/Surprise in a gift box.json";
 import { useLanguage } from "../_contexts/LanguageContext";
-import ComingNotification from "../../components/ComingNotification";
 
 type CurrentUser = {
   id?: string;
@@ -216,8 +215,6 @@ export default function ChatScreen({ me, other, onBack, onOpenMyProfile, onOpenO
   const [giftOverlayType, setGiftOverlayType] = useState<"peacock" | "dragon" | "space" | "love" | "bird" | "ghost" | "rose" | "flower" | null>(null);
   const [quickGiftVisible, setQuickGiftVisible] = useState(false);
   const [quickGiftCount, setQuickGiftCount] = useState(1);
-  const [showComingNotification, setShowComingNotification] = useState(false);
-  const otherWasOnlineRef = useRef(false);
   const quickGiftKeyRef = useRef<"peacock" | "dragon" | "space" | "love" | "bird" | "ghost" | "rose" | "flower" | null>(null);
   const quickGiftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickGiftProgress = useRef(new Animated.Value(0)).current;
@@ -299,28 +296,6 @@ export default function ChatScreen({ me, other, onBack, onOpenMyProfile, onOpenO
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [other.id, dedupeById]);
-
-  // عند دخول الطرف الآخر للدردشة — إظهار إشعار "قادم"
-  useEffect(() => {
-    let cancelled = false;
-    const checkOnline = async () => {
-      if (cancelled) return;
-      const ids = await fetchOnlineUserIds();
-      if (cancelled) return;
-      const isOnline = ids.includes(other.id);
-      if (isOnline && !otherWasOnlineRef.current) {
-        otherWasOnlineRef.current = true;
-        setShowComingNotification(true);
-      }
-      if (!isOnline) otherWasOnlineRef.current = false;
-    };
-    checkOnline();
-    const interval = setInterval(checkOnline, 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [other.id]);
 
   const stopRecordingAndCleanup = useCallback(() => {
     if (recordingIntervalRef.current) {
@@ -1269,13 +1244,6 @@ export default function ChatScreen({ me, other, onBack, onOpenMyProfile, onOpenO
       keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 0}
     >
       <View style={styles.container}>
-        {showComingNotification && (
-          <ComingNotification
-            name={other.name}
-            gender={other.gender}
-            onComplete={() => setShowComingNotification(false)}
-          />
-        )}
         <View style={styles.header}>
           <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.8}>
             <Ionicons name="arrow-back" size={22} color={TEXT_LIGHT} />

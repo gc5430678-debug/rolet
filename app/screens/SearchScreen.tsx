@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { searchUsersById, type UserSearchResult } from "../../utils/usersApi";
+import { fetchOnlineUserIds } from "../../utils/messagesApi";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { useLanguage } from "../_contexts/LanguageContext";
 import { useTheme } from "../_contexts/ThemeContext";
@@ -29,6 +30,14 @@ export default function SearchScreen({ onBack, onUserPress }: Props) {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const load = () => fetchOnlineUserIds().then((ids) => setOnlineIds(new Set(ids)));
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, []);
 
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
@@ -106,13 +115,16 @@ export default function SearchScreen({ onBack, onUserPress }: Props) {
                 activeOpacity={0.85}
                 onPress={() => onUserPress(u)}
               >
-                {u.profileImage ? (
-                  <Image source={{ uri: u.profileImage }} style={styles.userAvatar} />
-                ) : (
-                  <View style={[styles.userAvatar, styles.userAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
-                    <Ionicons name="person" size={24} color={theme.textMuted} />
-                  </View>
-                )}
+                <View style={styles.avatarWrap}>
+                  {u.profileImage ? (
+                    <Image source={{ uri: u.profileImage }} style={styles.userAvatar} />
+                  ) : (
+                    <View style={[styles.userAvatar, styles.userAvatarPlaceholder, { backgroundColor: theme.accentMuted }]}>
+                      <Ionicons name="person" size={24} color={theme.textMuted} />
+                    </View>
+                  )}
+                  {u.id && onlineIds.has(u.id) && <View style={styles.onlineDot} />}
+                </View>
                 <View style={styles.userInfo}>
                   <Text style={[styles.userName, { color: theme.textLight }]} numberOfLines={1}>
                     {u.name}
@@ -215,11 +227,25 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
   },
+  avatarWrap: {
+    position: "relative",
+    marginLeft: 12,
+  },
   userAvatar: {
     width: 52,
     height: 52,
     borderRadius: 26,
-    marginLeft: 12,
+  },
+  onlineDot: {
+    position: "absolute",
+    bottom: 1,
+    right: 1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#22c55e",
+    borderWidth: 1.5,
+    borderColor: "#1a1625",
   },
   userAvatarPlaceholder: {
     alignItems: "center",

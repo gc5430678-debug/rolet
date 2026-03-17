@@ -2,10 +2,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 
 // يجب أن يتطابق مع عنوان الخادم. غيّره حسب بيئة التشغيل:
+// - Railway (إنتاج): "https://back-end-production-13d7.up.railway.app"
 // - محلي (نفق loca.lt): "https://myapi123.loca.lt"
 // - محلي (محاكي): "http://localhost:3000"
 // - أندرويد محاكي: "http://10.0.2.2:3000"
-export const API_BASE_URL = "https://myapi123.loca.lt";
+export const API_BASE_URL = "https://back-end-production-13d7.up.railway.app";
 
 /**
  * فك تشفير JWT token بدون مكتبة (للتحقق من انتهاء الصلاحية فقط)

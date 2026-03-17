@@ -49,26 +49,42 @@ export async function getAuthToken(): Promise<string | null> {
 
 const FALLBACK_URL = "http://localhost:3000";
 
-async function tryFetchMoments(baseUrl: string, token: string | null): Promise<Moment[] | null> {
-  try {
-    const res = await axios.get(`${baseUrl}/api/moments`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      timeout: 8000,
-    });
-    if (res.data?.moments) return res.data.moments as Moment[];
-  } catch {}
+function isRetryableError(err: any): boolean {
+  const status = err?.response?.status;
+  const msg = String(err?.message || "").toLowerCase();
+  return status === 502 || status === 503 || status === 504 || msg.includes("network") || msg.includes("timeout");
+}
+
+async function tryFetchMoments(baseUrl: string, token: string | null, retries = 2): Promise<Moment[] | null> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await axios.get(`${baseUrl}/api/moments`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        timeout: 20000,
+      });
+      if (res.data?.moments) return res.data.moments as Moment[];
+    } catch (err: any) {
+      if (attempt < retries && isRetryableError(err)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+    }
+    break;
+  }
   return null;
 }
 
 /**
  * جلب كل اللحظات (لجميع المستخدمين)
  * عند فشل المحاولة الأولى يحاول localhost:3000 كبديل.
+ * يرمي خطأً عند الفشل حتى يعرف المتصل أن المشكلة في التحميل وليس عدم وجود لحظات.
  */
 export async function fetchMoments(): Promise<Moment[]> {
   const token = await getAuthToken();
   let list = await tryFetchMoments(API_BASE_URL, token);
   if (!list) list = await tryFetchMoments(FALLBACK_URL, token);
-  return list ?? [];
+  if (list == null) throw new Error("تعذر تحميل اللحظات. تحقق من الاتصال وأعد المحاولة.");
+  return list;
 }
 
 /**

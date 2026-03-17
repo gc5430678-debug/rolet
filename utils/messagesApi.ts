@@ -53,6 +53,30 @@ async function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const API_TIMEOUT = 20000;
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: unknown) {
+    const msg = err && typeof err === "object" && "message" in err ? String((err as Error).message) : "";
+    const code = err && typeof err === "object" && "code" in err ? String((err as { code?: string }).code) : "";
+    const status = err && typeof err === "object" && "response" in err ? (err as { response?: { status?: number } }).response?.status : 0;
+    const isRetryable =
+      msg.includes("Network") ||
+      code === "ERR_NETWORK" ||
+      code === "ECONNABORTED" ||
+      status === 502 ||
+      status === 503 ||
+      status === 504;
+    if (retries > 0 && isRetryable) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return withRetry(fn, retries - 1);
+    }
+    throw err;
+  }
+}
+
 const CACHE_KEYS = {
   inbox: "cache_messages_inbox_v1",
   threadPrefix: "cache_messages_thread_v1:",
@@ -229,10 +253,9 @@ export async function sendMessage(
 export async function fetchInbox(): Promise<InboxItem[]> {
   try {
     const headers = await getAuthHeaders();
-    const res = await axios.get(`${API_BASE_URL}/api/messages/inbox`, {
-      headers,
-      timeout: 8000,
-    });
+    const res = await withRetry(() =>
+      axios.get(`${API_BASE_URL}/api/messages/inbox`, { headers, timeout: API_TIMEOUT })
+    );
     if (res.data?.success && Array.isArray(res.data.messages)) {
       const list = res.data.messages as InboxItem[];
       await setCachedJson(CACHE_KEYS.inbox, list);
@@ -351,6 +374,60 @@ export async function joinGroupChat(): Promise<boolean> {
   }
 }
 
+/** توكن LiveKit للصوت المباشر */
+export async function getGroupChatVoiceToken(): Promise<{ token: string; wsUrl: string } | null> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await axios.get(`${API_BASE_URL}/api/group-chat/voice-token`, { headers, timeout: 8000 });
+    if (res.data?.success && res.data?.token && res.data?.wsUrl) {
+      return { token: res.data.token, wsUrl: res.data.wsUrl };
+    }
+    if (__DEV__ && res.data?.message) console.warn("[LiveKit] token error:", res.data.message);
+  } catch (e: unknown) {
+    if (__DEV__) console.warn("[LiveKit] token fetch error:", (e as Error)?.message);
+  }
+  return null;
+}
+
+/** رفع أغنية للبث في الدردشة الجماعية — استخدم localUri من getAssetInfoAsync عند الإمكان */
+export async function uploadGroupChatMusic(uri: string, filename?: string): Promise<{ musicUrl: string } | null> {
+  try {
+    const token = await AsyncStorage.getItem("token");
+    if (!token) return null;
+    const ext = (filename || "").toLowerCase().match(/\.(mp3|m4a|aac)$/)?.[1] || "mp3";
+    const mime = ext === "m4a" ? "audio/m4a" : ext === "aac" ? "audio/aac" : "audio/mpeg";
+
+    let uploadUri = uri;
+    if (uri.startsWith("content://") || uri.startsWith("ph://")) {
+      try {
+        const FileSystem = await import("expo-file-system/legacy");
+        const tempPath = `${FileSystem.cacheDirectory}song_${Date.now()}.${ext}`;
+        await FileSystem.copyAsync({ from: uri, to: tempPath });
+        uploadUri = tempPath;
+      } catch (copyErr) {
+        if (__DEV__) console.warn("uploadGroupChatMusic copy error:", copyErr);
+      }
+    }
+
+    const formData = new FormData();
+    formData.append("music", { uri: uploadUri, type: mime, name: `song.${ext}` } as any);
+    const res = await axios.post(`${API_BASE_URL}/api/group-chat/upload-music`, formData, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "multipart/form-data" },
+      timeout: 60000,
+    });
+    if (res.data?.success && res.data?.musicUrl) {
+      let musicUrl = res.data.musicUrl as string;
+      if (musicUrl.startsWith("/")) {
+        musicUrl = `${API_BASE_URL.replace(/\/$/, "")}${musicUrl}`;
+      }
+      return { musicUrl };
+    }
+  } catch (err) {
+    if (__DEV__) console.warn("uploadGroupChatMusic error:", err);
+  }
+  return null;
+}
+
 /** مغادرة غرفة الدردشة الجماعية */
 export async function leaveGroupChat(): Promise<boolean> {
   try {
@@ -363,6 +440,46 @@ export async function leaveGroupChat(): Promise<boolean> {
 }
 
 export type GroupChatUser = { userId: string; name: string; gender?: string; profileImage?: string | null };
+
+export type GroupChatSlot = {
+  slotIndex: number;
+  userId: string;
+  name: string;
+  profileImage?: string | null;
+  totalGold?: number;
+  diamonds?: number;
+  chargedGold?: number;
+  level?: number;
+} | null;
+
+/** جلب الشقق الحالية (من على المايك) */
+export async function fetchGroupChatSlots(): Promise<GroupChatSlot[]> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await axios.get(`${API_BASE_URL}/api/group-chat/slots`, { headers, timeout: 5000 });
+    if (res.data?.success && Array.isArray(res.data.slots)) {
+      return res.data.slots as GroupChatSlot[];
+    }
+  } catch {
+    // الخادم قد لا يدعم هذا المسار بعد
+  }
+  return Array(8).fill(null);
+}
+
+/** أخذ شقة أو ترك المايك */
+export async function setGroupChatSlot(slotIndex: number | null): Promise<GroupChatSlot[] | null> {
+  try {
+    const headers = await getAuthHeaders();
+    const body = slotIndex == null ? { action: "release" } : { slotIndex, action: "take" };
+    const res = await axios.post(`${API_BASE_URL}/api/group-chat/slot`, body, { headers, timeout: 5000 });
+    if (res.data?.success && Array.isArray(res.data.slots)) {
+      return res.data.slots as GroupChatSlot[];
+    }
+  } catch (err) {
+    console.log("setGroupChatSlot error:", err);
+  }
+  return null;
+}
 
 /** قائمة المستخدمين في غرفة الدردشة الجماعية */
 export async function fetchGroupChatUsers(): Promise<GroupChatUser[]> {
@@ -398,13 +515,31 @@ export type GroupChatMessage = {
   imageUrl?: string | null;
 };
 
+/** تخزين مؤقت للرسائل — يبقى عند الخروج والعودة */
+let groupChatMessagesCache: GroupChatMessage[] = [];
+
+export function getGroupChatMessagesCache(): GroupChatMessage[] {
+  return groupChatMessagesCache;
+}
+
+export function setGroupChatMessagesCache(msgs: GroupChatMessage[]): void {
+  groupChatMessagesCache = msgs;
+}
+
 /** جلب رسائل الدردشة الجماعية */
 export async function fetchGroupChatMessages(): Promise<GroupChatMessage[]> {
   try {
     const headers = await getAuthHeaders();
-    const res = await axios.get(`${API_BASE_URL}/api/group-chat/messages?limit=250`, { headers, timeout: 8000 });
+    const res = await withRetry(() =>
+      axios.get(`${API_BASE_URL}/api/group-chat/messages?limit=250`, { headers, timeout: API_TIMEOUT })
+    );
     if (res.data?.success && Array.isArray(res.data.messages)) {
-      return res.data.messages as GroupChatMessage[];
+      const msgs = (res.data.messages as GroupChatMessage[]).map((m) => ({
+        ...m,
+        id: String(m.id),
+      }));
+      setGroupChatMessagesCache(msgs);
+      return msgs;
     }
   } catch (err) {
     console.log("fetchGroupChatMessages error:", err);
@@ -439,10 +574,11 @@ export async function sendGroupChatMessage(
         replyToText: options?.replyToText ?? null,
         replyToFromId: options?.replyToFromId ?? null,
       },
-      { headers, timeout: 8000 }
+      { headers, timeout: 5000 }
     );
     if (res.data?.success && res.data?.message) {
-      return res.data.message as GroupChatMessage;
+      const m = res.data.message as GroupChatMessage;
+      return { ...m, id: String(m.id) };
     }
   } catch (err) {
     console.log("sendGroupChatMessage error:", err);

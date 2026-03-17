@@ -11,13 +11,12 @@ import {
   ActivityIndicator,
   Dimensions,
 } from "react-native";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const CARD_SIZE = (SCREEN_WIDTH - 10 * 2 - 8 * 2) / 3;
 import { Ionicons } from "@expo/vector-icons";
 import { fetchGroupChatUsers, type GroupChatUser } from "../../utils/messagesApi";
 import { API_BASE_URL } from "../../utils/authHelper";
 
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const CARD_SIZE = (SCREEN_WIDTH - 10 * 2 - 8 * 2) / 3;
 const BG_DARK = "#1a1625";
 const TEXT_LIGHT = "#f5f3ff";
 const TEXT_MUTED = "#a1a1aa";
