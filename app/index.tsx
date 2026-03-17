@@ -35,7 +35,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Localization from "expo-localization";
 import { checkAuthStatus, checkAuthStatusQuick, API_BASE_URL } from "../utils/authHelper";
 import { leaveGroupChat, fetchGroupChatSlots } from "../utils/messagesApi";
-import { preloadAppCache } from "../utils/cachePreload";
+import { preloadAppCache, preloadFromBackend } from "../utils/cachePreload";
 import { registerPushTokenWithBackend, notifyFriendsOnline, notifyOffline, setupNotificationResponseListener } from "../utils/pushNotifications";
 import { getFlagEmoji, getCountryName } from "../utils/countries";
 import type { UserSearchResult } from "../utils/usersApi";
@@ -909,7 +909,7 @@ export default function Page() {
         const res = await axios.post(
           `${API_BASE_URL}/api/auth/request-pin`,
           { email: trimmed, mode: "login" },
-          { timeout: 25000 }
+          { timeout: 15000 }
         );
         if (res.data?.success) {
           setEmail(trimmed);
@@ -961,7 +961,7 @@ export default function Page() {
         const res = await axios.post(
           `${API_BASE_URL}/api/auth/request-pin`,
           { email: trimmed, mode: "signup" },
-          { timeout: 25000 }
+          { timeout: 15000 }
         );
         if (res.data?.success) {
           setEmail(trimmed);
@@ -1007,12 +1007,13 @@ export default function Page() {
         const res = await axios.post(
           `${API_BASE_URL}/api/auth/verify-pin`,
           { email: email.trim().toLowerCase(), pin: pinStr },
-          { timeout: 20000 }
+          { timeout: 12000 }
         );
         if (res.data?.success && res.data.token && res.data.user) {
           await AsyncStorage.setItem("token", res.data.token);
           await AsyncStorage.setItem("user", JSON.stringify(res.data.user));
           setUser(res.data.user);
+          preloadFromBackend();
           setAuthState("main");
         } else {
           setError(res.data?.message || "فشل التحقق");
@@ -1074,7 +1075,7 @@ export default function Page() {
         const res = await axios.post(
           `${API_BASE_URL}/api/auth/request-pin`,
           body,
-          { timeout: 25000 }
+          { timeout: 15000 }
         );
         if (res.data?.success) {
           setSuccessMsg("تم إعادة إرسال الكود");

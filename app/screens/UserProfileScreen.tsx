@@ -145,13 +145,24 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
   }, [user.id]);
 
   useEffect(() => {
-    const missing = user.age == null || !user.country || !user.gender;
+    const missing = user.age == null || !user.country || !user.gender || !user.profileImage;
     if (!missing) return;
     const uid = user.id;
     searchUsersById(uid).then((users) => {
       const found = users.find((u) => u.id === uid);
       if (found) {
-        setDisplayUser((prev) => prev.id === uid ? { ...prev, age: found.age ?? prev.age, country: found.country || prev.country, gender: found.gender || prev.gender } : prev);
+        setDisplayUser((prev) =>
+          prev.id === uid
+            ? {
+                ...prev,
+                age: found.age ?? prev.age,
+                country: found.country || prev.country,
+                gender: found.gender || prev.gender,
+                profileImage: found.profileImage || prev.profileImage,
+                name: found.name || prev.name,
+              }
+            : prev
+        );
       }
     });
   }, [user]);
@@ -391,8 +402,8 @@ export default function UserProfileScreen({ user, currentUser, onBack, fromAdmir
             <Ionicons name="heart" size={12} color="#6B4423" />
             <Text style={styles.likeBadgeCount}>{profileLikeCount}</Text>
           </View>
-          {user.profileImage ? (
-            <Image source={{ uri: user.profileImage }} style={styles.profileImage} resizeMode="cover" />
+          {(displayUser.profileImage || user.profileImage) ? (
+            <Image source={{ uri: displayUser.profileImage || user.profileImage }} style={styles.profileImage} resizeMode="cover" />
           ) : (
             <View style={[styles.profileImage, styles.profileImagePlaceholder]}>
               <Ionicons name="person" size={100} color={TEXT_MUTED} />

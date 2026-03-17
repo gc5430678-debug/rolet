@@ -59,7 +59,7 @@ async function verifyTokenWithServer(token, retries = 2) {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: 8000, // زيادة timeout إلى 8 ثواني
+        timeout: 5000,
       });
 
       if (res.data?.success && res.data?.user) {

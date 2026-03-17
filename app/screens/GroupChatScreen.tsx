@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -33,7 +33,8 @@ const MENTION_COLOR = "#38bdf8";
 function renderMessageWithMentions(
   text: string,
   baseStyle: object,
-  onOpenProfile?: (slot: { userId: string; name?: string; profileImage?: string | null }) => void
+  onOpenProfile?: (slot: { userId: string; name?: string; profileImage?: string | null }) => void,
+  userIdToProfileImage?: Record<string, string | null | undefined>
 ) {
   const mentionRegex = /@\[([^\]]+)\]([^\s]*)|(@[^\s]+)/g;
   const parts: { type: "text" | "mention"; text: string; userId?: string; name?: string }[] = [];
@@ -61,10 +62,11 @@ function renderMessageWithMentions(
         }
         const mentionStyle = [baseStyle, { color: MENTION_COLOR }];
         if (part.userId && onOpenProfile) {
+          const profileImage = userIdToProfileImage?.[part.userId] ?? null;
           return (
             <TouchableOpacity
               key={i}
-              onPress={() => onOpenProfile({ userId: part.userId!, name: part.name, profileImage: null })}
+              onPress={() => onOpenProfile({ userId: part.userId!, name: part.name, profileImage })}
               activeOpacity={0.6}
               style={{ alignSelf: "baseline" }}
             >
@@ -121,6 +123,16 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
   const flatRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
   const currentUserId = user?.id || "";
+
+  const userIdToProfileImageMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const m of messages) {
+      if (m.fromId && m.fromProfileImage && !map[m.fromId]) {
+        map[m.fromId] = getImageUrl(m.fromProfileImage);
+      }
+    }
+    return map;
+  }, [messages]);
 
   useEffect(() => {
     const show = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
@@ -386,7 +398,7 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
                       </View>
                     </View>
                     <View style={[styles.msgBubble, isMe && styles.msgBubbleMe]}>
-                      {renderMessageWithMentions(item.text, [styles.msgText, isMe ? styles.msgTextMe : styles.msgTextOther], onOpenProfile)}
+                      {renderMessageWithMentions(item.text, [styles.msgText, isMe ? styles.msgTextMe : styles.msgTextOther], onOpenProfile, userIdToProfileImageMap)}
                       <Text style={[styles.msgTime, isMe ? styles.msgTimeMe : styles.msgTimeOther]}>
                         {item.createdAt ? new Date(item.createdAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }) : ""}
                       </Text>
