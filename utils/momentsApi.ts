@@ -47,7 +47,26 @@ export async function getAuthToken(): Promise<string | null> {
   return AsyncStorage.getItem("token");
 }
 
+const CACHE_KEY = "cache_moments_v1";
 const FALLBACK_URL = "http://localhost:3000";
+
+async function readCachedMoments(): Promise<Moment[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as Moment[];
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedMoments(list: Moment[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(list));
+  } catch {
+    // ignore
+  }
+}
 
 function isRetryableError(err: any): boolean {
   const status = err?.response?.status;
@@ -74,6 +93,17 @@ async function tryFetchMoments(baseUrl: string, token: string | null, retries = 
   return null;
 }
 
+/** جلب اللحظات المخزّنة محلياً — للعرض الفوري */
+export async function getCachedMoments(): Promise<Moment[]> {
+  const cached = await readCachedMoments();
+  return cached ?? [];
+}
+
+/** تحديث الكاش بعد إنشاء أو حذف لحظة */
+export async function setCachedMoments(list: Moment[]): Promise<void> {
+  await writeCachedMoments(list);
+}
+
 /**
  * جلب كل اللحظات (لجميع المستخدمين)
  * عند فشل المحاولة الأولى يحاول localhost:3000 كبديل.
@@ -83,7 +113,12 @@ export async function fetchMoments(): Promise<Moment[]> {
   const token = await getAuthToken();
   let list = await tryFetchMoments(API_BASE_URL, token);
   if (!list) list = await tryFetchMoments(FALLBACK_URL, token);
-  if (list == null) throw new Error("تعذر تحميل اللحظات. تحقق من الاتصال وأعد المحاولة.");
+  if (list == null) {
+    const cached = await readCachedMoments();
+    if (cached) return cached;
+    throw new Error("تعذر تحميل اللحظات. تحقق من الاتصال وأعد المحاولة.");
+  }
+  await writeCachedMoments(list);
   return list;
 }
 

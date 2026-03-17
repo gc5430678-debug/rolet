@@ -20,6 +20,8 @@ import { Video, ResizeMode } from "expo-av";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import {
   fetchMoments,
+  getCachedMoments,
+  setCachedMoments,
   createMoment,
   toggleMomentLike,
   deleteMoment,
@@ -129,6 +131,11 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
 
   const loadMoments = useCallback(async (isRefresh = false) => {
+    if (!isRefresh) {
+      getCachedMoments().then((cached) => {
+        if (cached.length > 0) setMoments(cached);
+      });
+    }
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setLoadError(null);
@@ -253,7 +260,11 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
         userProfileImage: user.profileImage || null,
       });
       if (moment) {
-        setMoments((prev) => [moment, ...prev]);
+        setMoments((prev) => {
+          const next = [moment, ...prev];
+          setCachedMoments(next);
+          return next;
+        });
         const secsLeft = await getLocalShareMomentSecondsUntilClaim();
         if (secsLeft === null || secsLeft === 0) {
           await setLocalShareMomentClaimedAt(Date.now());
@@ -315,7 +326,11 @@ export default function MomentScreen({ user, onWalletUpdate }: Props) {
             onPress: async () => {
               const ok = await deleteMoment(moment.id);
               if (ok) {
-                setMoments((prev) => prev.filter((m) => m.id !== moment.id));
+                setMoments((prev) => {
+                  const next = prev.filter((m) => m.id !== moment.id);
+                  setCachedMoments(next);
+                  return next;
+                });
                 if (videoModal?.id === moment.id) closeVideo();
               } else {
                 show({ title: t("momentScreen.error"), message: t("momentScreen.deleteFailed"), type: "error" });

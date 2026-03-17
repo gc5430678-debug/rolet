@@ -53,7 +53,7 @@ async function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const API_TIMEOUT = 20000;
+const API_TIMEOUT = 8000;
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
   try {
@@ -70,7 +70,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
       status === 503 ||
       status === 504;
     if (retries > 0 && isRetryable) {
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 1000));
       return withRetry(fn, retries - 1);
     }
     throw err;
@@ -282,6 +282,11 @@ export async function fetchOnlineUserIds(): Promise<string[]> {
     // الخادم قد لا يدعم هذا المسار بعد
   }
   return [];
+}
+
+/** جلب الرسائل المخزنة محلياً — للعرض الفوري عند فتح المحادثة */
+export async function getCachedThread(otherId: string): Promise<ChatMessage[]> {
+  return getCachedJson<ChatMessage[]>(`${CACHE_KEYS.threadPrefix}${otherId}`, []);
 }
 
 export async function fetchThread(otherId: string): Promise<ChatMessage[]> {

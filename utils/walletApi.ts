@@ -9,25 +9,44 @@ export type WalletBalance = {
   diamonds: number;
 };
 
+const CACHE_KEY = "cache_wallet_v1";
+
+async function getCachedWalletFromStorage(): Promise<WalletBalance | null> {
+  try {
+    const raw = await AsyncStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as WalletBalance;
+  } catch {
+    return null;
+  }
+}
+
+/** جلب الرصيد المخزّن محلياً — للعرض الفوري */
+export async function getCachedWallet(): Promise<WalletBalance | null> {
+  return getCachedWalletFromStorage();
+}
+
 export async function fetchWallet(): Promise<WalletBalance | null> {
   try {
     const token = await AsyncStorage.getItem("token");
-    if (!token) return null;
+    if (!token) return getCachedWalletFromStorage();
     const res = await axios.get(`${API_BASE_URL}/api/wallet`, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 10000,
+      timeout: 8000,
     });
     if (res.data?.success && res.data?.wallet) {
       const w = res.data.wallet;
-      return {
+      const balance: WalletBalance = {
         totalGold: w.totalGold ?? 0,
         chargedGold: w.chargedGold ?? 0,
         freeGold: w.freeGold ?? 0,
         diamonds: w.diamonds ?? 0,
       };
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(balance));
+      return balance;
     }
   } catch {
     // ignore
   }
-  return null;
+  return getCachedWalletFromStorage();
 }

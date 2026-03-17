@@ -2,7 +2,7 @@ import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, AppState }
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState, useCallback } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchInbox, fetchOnlineUserIds, fetchGroupChatMessages, getGroupChatMessagesCache, type InboxItem } from "../../utils/messagesApi";
+import { fetchInbox, getCachedInbox, fetchOnlineUserIds, fetchGroupChatMessages, getGroupChatMessagesCache, type InboxItem } from "../../utils/messagesApi";
 import type { UserSearchResult } from "../../utils/usersApi";
 import { API_BASE_URL } from "../../utils/authHelper";
 import { useLanguage } from "../_contexts/LanguageContext";
@@ -47,8 +47,9 @@ export default function MessagesScreen({ onOpenChat, onOpenGroupChat }: Props) {
   }, []);
 
   useEffect(() => {
+    getCachedInbox().then(setItems);
     loadData();
-    const interval = setInterval(loadData, 3000);
+    const interval = setInterval(loadData, 1500);
     return () => clearInterval(interval);
   }, [loadData]);
 

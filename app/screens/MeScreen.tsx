@@ -14,7 +14,7 @@ import * as Localization from "expo-localization";
 import { getFlagEmoji, getCountryName } from "../../utils/countries";
 import { fetchFollowers, fetchFriends, fetchFollowing, fetchProfileVisitors } from "../../utils/socialApi";
 import { fetchProfileLikers } from "../../utils/profileLikesApi";
-import { fetchWallet } from "../../utils/walletApi";
+import { fetchWallet, getCachedWallet } from "../../utils/walletApi";
 import { useAppAlert } from "../../components/AppAlertProvider";
 import { useLanguage } from "../_contexts/LanguageContext";
 import { useTheme } from "../_contexts/ThemeContext";
@@ -111,6 +111,14 @@ export default function MeScreen({ user, onEditProfile, onOpenMyProfile, onOpenI
   }, [profileId]);
 
   useEffect(() => {
+    getCachedWallet().then((w) => {
+      if (w) {
+        setGoldBalance(w.totalGold ?? 0);
+        setChargedGold(w.chargedGold ?? 0);
+        setFreeGold(w.freeGold ?? 0);
+        setDiamondBalance(w.diamonds ?? 0);
+      }
+    });
     fetchWallet().then((w) => {
       if (w) {
         setGoldBalance(w.totalGold ?? 0);

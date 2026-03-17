@@ -5,7 +5,7 @@ import { Audio } from "expo-av";
 import LottieView from "lottie-react-native";
 import type { UserSearchResult } from "../../utils/usersApi";
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { sendMessage, fetchThread, deleteMessage, uploadVoiceMessage, uploadImageMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, buildSenderForNotification, type ChatMessage } from "../../utils/messagesApi";
+import { sendMessage, fetchThread, getCachedThread, deleteMessage, uploadVoiceMessage, uploadImageMessage, fetchVoiceToLocalUri, getVoicePlaybackUrl, buildSenderForNotification, type ChatMessage } from "../../utils/messagesApi";
 import { fetchWallet } from "../../utils/walletApi";
 import { claimFiveMessagesBonus, setLocalClaimedAt, claimDiceBonus, setLocalDiceClaimedAt } from "../../utils/tasksApi";
 import * as ImagePicker from "expo-image-picker";
@@ -263,20 +263,22 @@ export default function ChatScreen({ me, other, onBack, onOpenMyProfile, onOpenO
 
   useEffect(() => {
     let cancelled = false;
+    getCachedThread(other.id).then((cached) => {
+      if (cancelled) return;
+      if (cached.length > 0) setMessages(dedupeById(cached.map((m) => mapServerToLocal(m))));
+    });
     fetchThread(other.id).then((list) => {
       if (cancelled) return;
       setMessages(dedupeById(list.map((m) => mapServerToLocal(m))));
-      setTimeout(() => {
-        scrollRef.current?.scrollToEnd({ animated: false });
-      }, 50);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
     });
     return () => {
       cancelled = true;
     };
   }, [other.id, dedupeById]);
 
-  // استعلام دوري للرسائل الجديدة عند فتح المحادثة (تحديث فوري)
-  const POLL_INTERVAL_MS = 3000;
+  // استعلام دوري للرسائل الجديدة — كل 1.5 ثانية
+  const POLL_INTERVAL_MS = 1500;
   useEffect(() => {
     const interval = setInterval(() => {
       fetchThread(other.id).then((list) => {
