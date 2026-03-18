@@ -3,6 +3,7 @@ import {
   StyleSheet,
   View,
   TouchableOpacity,
+  Pressable,
   Platform,
   Text,
   ScrollView,
@@ -14,6 +15,7 @@ import {
   Keyboard,
   ActivityIndicator,
   RefreshControl,
+  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -27,6 +29,7 @@ import {
   type GroupChatMessage,
 } from "../../utils/messagesApi";
 import { API_BASE_URL } from "../../utils/authHelper";
+import * as Clipboard from "expo-clipboard";
 
 const MENTION_COLOR = "#38bdf8";
 
@@ -55,7 +58,7 @@ function renderMessageWithMentions(
     parts.push({ type: "text", text: text.slice(lastIndex) });
   }
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", flex: 1 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignSelf: "flex-start", maxWidth: BUBBLE_WIDTH }}>
       {parts.map((part, i) => {
         if (part.type === "text") {
           return <Text key={i} style={baseStyle}>{part.text}</Text>;
@@ -120,6 +123,8 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
   const [mentionPrefix, setMentionPrefix] = useState<string | null>(null);
   const [mentionData, setMentionData] = useState<{ userId: string; name: string; profileImage?: string | null } | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [bubbleMenu, setBubbleMenu] = useState<{ text: string; fromId: string; fromName: string } | null>(null);
+  const [replyTo, setReplyTo] = useState<{ replyToText: string; replyToFromId: string; replyToFromName: string } | null>(null);
   const flatRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
   const currentUserId = user?.id || "";
@@ -187,6 +192,27 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
+  const handleBubbleLongPress = useCallback((item: GroupChatMessage) => {
+    setBubbleMenu({ text: item.text, fromId: item.fromId, fromName: item.fromName });
+  }, []);
+
+  const handleReplyFromMenu = useCallback(() => {
+    if (!bubbleMenu) return;
+    setReplyTo({
+      replyToText: bubbleMenu.text,
+      replyToFromId: bubbleMenu.fromId,
+      replyToFromName: bubbleMenu.fromName,
+    });
+    setBubbleMenu(null);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }, [bubbleMenu]);
+
+  const handleCopyFromMenu = useCallback(async () => {
+    if (!bubbleMenu) return;
+    await Clipboard.setStringAsync(bubbleMenu.text);
+    setBubbleMenu(null);
+  }, [bubbleMenu]);
+
   const handleSend = useCallback(async () => {
     const prefix = mentionData ? `@[${mentionData.userId}]${mentionData.name} ` : (mentionPrefix || "");
     const fullText = (prefix + inputText).trim();
@@ -194,6 +220,8 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
     setInputText("");
     setMentionPrefix(null);
     setMentionData(null);
+    const replyPayload = replyTo ? { replyToText: replyTo.replyToText, replyToFromId: replyTo.replyToFromId, replyToFromName: replyTo.replyToFromName } : undefined;
+    setReplyTo(null);
     Keyboard.dismiss();
     const tempId = `temp_${Date.now()}`;
     const optimistic: GroupChatMessage = {
@@ -203,6 +231,9 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
       fromProfileImage: user?.profileImage ?? null,
       text: fullText,
       createdAt: new Date().toISOString(),
+      replyToText: replyPayload?.replyToText ?? null,
+      replyToFromId: replyPayload?.replyToFromId ?? null,
+      replyToFromName: replyPayload?.replyToFromName ?? null,
     };
     setMessages((prev) => {
       const next = [...prev, optimistic];
@@ -210,7 +241,7 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
       return next;
     });
     setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 50);
-    const msg = await sendGroupChatMessage(fullText);
+    const msg = await sendGroupChatMessage(fullText, replyPayload);
     if (msg) {
       setMessages((prev) => {
         const next = prev.map((m) => (m.id === tempId ? { ...msg, id: String(msg.id) } : m));
@@ -224,7 +255,7 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
         return filtered;
       });
     }
-  }, [inputText, mentionPrefix, mentionData, currentUserId, user?.name, user?.profileImage]);
+  }, [inputText, mentionPrefix, mentionData, replyTo, currentUserId, user?.name, user?.profileImage]);
 
   const avatarSize = expanded ? (SCREEN_WIDTH - 32 - AVATAR_GAP * (AVATAR_COLS + 1)) / AVATAR_COLS : 32;
 
@@ -397,12 +428,26 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
                         </View>
                       </View>
                     </View>
-                    <View style={[styles.msgBubble, isMe && styles.msgBubbleMe]}>
+                    <Pressable
+                      style={[styles.msgBubble, isMe && styles.msgBubbleMe]}
+                      onLongPress={() => handleBubbleLongPress(item)}
+                      delayLongPress={400}
+                    >
+                      {item.replyToText ? (
+                        <View style={[styles.msgReplyBox, isMe && styles.msgReplyBoxMe]}>
+                          <Text style={[styles.msgReplyLabel, isMe && styles.msgReplyLabelMe]} numberOfLines={1}>
+                            {item.replyToFromName || "رد"}
+                          </Text>
+                          <Text style={[styles.msgReplyText, isMe && styles.msgReplyTextMe]} numberOfLines={2}>
+                            {item.replyToText}
+                          </Text>
+                        </View>
+                      ) : null}
                       {renderMessageWithMentions(item.text, [styles.msgText, isMe ? styles.msgTextMe : styles.msgTextOther], onOpenProfile, userIdToProfileImageMap)}
                       <Text style={[styles.msgTime, isMe ? styles.msgTimeMe : styles.msgTimeOther]}>
                         {item.createdAt ? new Date(item.createdAt).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }) : ""}
                       </Text>
-                    </View>
+                    </Pressable>
                   </View>
                 </View>
               );
@@ -420,14 +465,44 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
         )}
       </View>
 
+      <Modal visible={!!bubbleMenu} transparent animationType="fade">
+        <Pressable style={styles.bubbleMenuOverlay} onPress={() => setBubbleMenu(null)}>
+          <TouchableOpacity style={styles.bubbleMenuCard} activeOpacity={1} onPress={() => {}}>
+            <TouchableOpacity style={styles.bubbleMenuBtn} onPress={handleReplyFromMenu} activeOpacity={0.7}>
+              <Ionicons name="arrow-undo" size={16} color={TEXT_LIGHT} />
+              <Text style={styles.bubbleMenuBtnText}>رد</Text>
+            </TouchableOpacity>
+            <View style={styles.bubbleMenuDivider} />
+            <TouchableOpacity style={styles.bubbleMenuBtn} onPress={handleCopyFromMenu} activeOpacity={0.7}>
+              <Ionicons name="copy-outline" size={16} color={TEXT_LIGHT} />
+              <Text style={styles.bubbleMenuBtnText}>نسخ</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Pressable>
+      </Modal>
+
       <View style={[styles.inputRow, keyboardVisible && styles.inputRowKeyboardUp]}>
         <View style={styles.inputWrap}>
-          {mentionPrefix ? (
-            <TouchableOpacity onPress={() => { setMentionPrefix(null); setMentionData(null); }} activeOpacity={0.7}>
-              <Text style={styles.mentionText}>{mentionPrefix}</Text>
+          {replyTo ? (
+            <TouchableOpacity
+              style={styles.replyPreview}
+              onPress={() => setReplyTo(null)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.replyPreviewContent}>
+                <Text style={styles.replyPreviewLabel}>رد على {replyTo.replyToFromName}</Text>
+                <Text style={styles.replyPreviewText} numberOfLines={2}>{replyTo.replyToText}</Text>
+              </View>
+              <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
           ) : null}
-          <TextInput
+          <View style={styles.inputInnerRow}>
+            {mentionPrefix ? (
+              <TouchableOpacity onPress={() => { setMentionPrefix(null); setMentionData(null); }} activeOpacity={0.7}>
+                <Text style={styles.mentionText}>{mentionPrefix}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TextInput
             ref={inputRef}
             style={[styles.input, mentionPrefix ? styles.inputWithMention : null]}
             placeholder={mentionPrefix ? "" : "اكتب رسالة..."}
@@ -437,6 +512,7 @@ export default function GroupChatScreen({ user, onBack, onOpenUsers, onOpenProfi
             onSubmitEditing={handleSend}
             returnKeyType="send"
           />
+          </View>
         </View>
           <TouchableOpacity style={styles.sendBtn} onPress={handleSend} activeOpacity={0.8}>
             <Ionicons name="send" size={18} color="#fff" />
@@ -582,7 +658,7 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     alignItems: "flex-start",
     gap: 8,
-    width: BUBBLE_WIDTH,
+    maxWidth: BUBBLE_WIDTH,
   },
   msgSenderColMe: {
     alignItems: "flex-end",
@@ -624,8 +700,8 @@ const styles = StyleSheet.create({
     color: TEXT_MUTED,
   },
   msgBubble: {
-    width: "100%",
-    alignSelf: "stretch",
+    alignSelf: "flex-start",
+    maxWidth: BUBBLE_WIDTH,
     backgroundColor: "#ffffff",
     borderRadius: 12,
     paddingHorizontal: 12,
@@ -639,9 +715,27 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   msgBubbleMe: {
+    alignSelf: "flex-end",
     backgroundColor: ACCENT,
     borderColor: "rgba(167, 139, 250, 0.5)",
   },
+  msgReplyBox: {
+    backgroundColor: "rgba(0,0,0,0.06)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: "rgba(0,0,0,0.2)",
+  },
+  msgReplyBoxMe: {
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderLeftColor: "rgba(255,255,255,0.5)",
+  },
+  msgReplyLabel: { fontSize: 10, color: "rgba(0,0,0,0.5)", marginBottom: 2 },
+  msgReplyLabelMe: { color: "rgba(255,255,255,0.8)" },
+  msgReplyText: { fontSize: 12, color: "#374151" },
+  msgReplyTextMe: { color: "rgba(255,255,255,0.95)" },
   msgName: { fontSize: 11, color: ACCENT, marginBottom: 2 },
   msgText: { fontSize: 13, lineHeight: 19 },
   msgTextMe: { color: "#ffffff" },
@@ -663,10 +757,53 @@ const styles = StyleSheet.create({
   inputRowKeyboardUp: {
     paddingBottom: 6,
   },
-  inputWrap: {
+  bubbleMenuOverlay: {
     flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  bubbleMenuCard: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderRadius: 12,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  bubbleMenuBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  bubbleMenuBtnText: { fontSize: 14, color: TEXT_LIGHT, fontWeight: "600" },
+  bubbleMenuDivider: { width: 1, height: 20, backgroundColor: "rgba(255,255,255,0.3)" },
+  replyPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "stretch",
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  replyPreviewContent: { flex: 1 },
+  replyPreviewLabel: { fontSize: 11, color: "rgba(255,255,255,0.8)", marginBottom: 2 },
+  replyPreviewText: { fontSize: 12, color: TEXT_LIGHT },
+  inputInnerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    gap: 4,
+  },
+  inputWrap: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "stretch",
     backgroundColor: CARD_BG,
     borderRadius: 18,
     borderWidth: 1,

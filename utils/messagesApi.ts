@@ -580,6 +580,7 @@ export async function sendGroupChatMessage(
     giftAmount?: number | null;
     replyToText?: string | null;
     replyToFromId?: string | null;
+    replyToFromName?: string | null;
   }
 ): Promise<GroupChatMessage | null> {
   try {
@@ -595,6 +596,7 @@ export async function sendGroupChatMessage(
         giftAmount: options?.giftAmount ?? null,
         replyToText: options?.replyToText ?? null,
         replyToFromId: options?.replyToFromId ?? null,
+        replyToFromName: options?.replyToFromName ?? null,
       },
       { headers, timeout: 5000 }
     );
